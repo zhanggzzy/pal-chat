@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_prefix="PAL_CHAT_",
+        env_ignore_empty=True,
         extra="ignore",
     )
 
@@ -42,4 +43,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

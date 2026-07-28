@@ -74,6 +74,107 @@ class TopicRead(BaseModel):
     updated_at: datetime
 
 
+class TopicTransitionRead(BaseModel):
+    id: str
+    conversation_id: str
+    from_topic_id: str | None
+    to_topic_id: str
+    cause_message_id: str
+    action: str
+    previous_status_json: dict[str, Any]
+    created_at: datetime
+
+
+class TopicSummaryRevisionRead(BaseModel):
+    id: str
+    topic_id: str
+    content: str
+    through_message_id: str
+    model_call_id: str | None
+    estimated_tokens: int
+    created_at: datetime
+
+
+class MessageTopicLinkRead(BaseModel):
+    id: str
+    message_id: str
+    topic_id: str
+    kind: str
+    confidence: float
+    route_action: str
+    route_method: str
+    signals_json: list[str]
+    policy_version: str
+    is_override: bool
+    created_at: datetime
+
+
+class AgentTopicIndexRead(BaseModel):
+    agent_id: str
+    topic_id: str
+    salience: float
+    role_affinity: float
+    familiarity: float
+    last_seen_message_id: str | None
+    last_selected_at: datetime | None
+    reason_codes_json: list[str]
+    index_version: str
+    updated_at: datetime
+
+
+class ContextSnapshotRead(BaseModel):
+    id: str
+    run_id: str
+    trigger_message_id: str
+    agent_id: str
+    purpose: str
+    policy_version: str
+    tokenizer: str
+    estimated_tokens: int
+    canonical_content_hash: str
+    created_at: datetime
+
+
+class ResponseDecisionRead(BaseModel):
+    id: str
+    run_id: str
+    trigger_message_id: str
+    agent_id: str
+    snapshot_id: str
+    model_call_id: str | None
+    eligible: bool
+    should_reply: bool
+    score: float
+    threshold: float
+    dimensions_json: dict[str, Any]
+    reason_codes_json: list[str]
+    reply_intent: str
+    outcome: str
+    policy_version: str
+    created_at: datetime
+
+
+class ModelCallRead(BaseModel):
+    id: str
+    run_id: str
+    purpose: str
+    agent_id: str | None
+    provider: str
+    model: str
+    provider_request_id: str | None
+    status: str
+    input_tokens: int
+    output_tokens: int
+    cached_tokens: int
+    token_count_source: str
+    latency_ms: int
+    pricing_version: str | None
+    estimated_cost_micros: int | None
+    error_category: str | None
+    started_at: datetime
+    ended_at: datetime
+
+
 class SSEEventRead(BaseModel):
     event_id: str
     seq: int
@@ -130,20 +231,19 @@ class TimelineResponse(BaseModel):
 
 class MessageAnalysisResponse(BaseModel):
     message: MessageRead
-    topic_links: list[dict[str, Any]]
-    agent_indexes: list[dict[str, Any]]
-    snapshots: list[dict[str, Any]]
-    decisions: list[dict[str, Any]]
-    model_calls: list[dict[str, Any]]
+    topic_links: list[MessageTopicLinkRead]
+    agent_indexes: list[AgentTopicIndexRead]
+    snapshots: list[ContextSnapshotRead]
+    decisions: list[ResponseDecisionRead]
+    model_calls: list[ModelCallRead]
 
 
 class TopicDetailResponse(BaseModel):
     topic: TopicRead
-    transitions: list[dict[str, Any]]
-    summaries: list[dict[str, Any]]
+    transitions: list[TopicTransitionRead]
+    summaries: list[TopicSummaryRevisionRead]
 
 
 class HealthResponse(BaseModel):
     status: str
     schema_revision: str | None = None
-

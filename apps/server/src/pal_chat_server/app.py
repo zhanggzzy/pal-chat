@@ -10,6 +10,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import text
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from pal_chat_server.config import get_settings
@@ -17,6 +19,8 @@ from pal_chat_server.db import get_db_session, get_engine
 from pal_chat_server.errors import AppError, build_error_response
 from pal_chat_server.models import ChatRun, Conversation, Participant, RunEvent, Topic
 from pal_chat_server.schemas import (
+    AgentTopicIndexRead,
+    ContextSnapshotRead,
     ConversationCreateRequest,
     ConversationCreateResponse,
     ConversationDetailResponse,
@@ -28,7 +32,10 @@ from pal_chat_server.schemas import (
     MessageCreateResponse,
     MessageListResponse,
     MessageRead,
+    MessageTopicLinkRead,
+    ModelCallRead,
     ParticipantRead,
+    ResponseDecisionRead,
     RunRead,
     RunStopResponse,
     SSEEventRead,
@@ -36,6 +43,8 @@ from pal_chat_server.schemas import (
     TopicDetailResponse,
     TopicListResponse,
     TopicRead,
+    TopicSummaryRevisionRead,
+    TopicTransitionRead,
 )
 from pal_chat_server.services import (
     create_conversation,
@@ -72,6 +81,34 @@ def to_message_read(item: object) -> MessageRead:
 
 def to_topic_read(item: Topic) -> TopicRead:
     return TopicRead.model_validate(item, from_attributes=True)
+
+
+def to_topic_transition_read(item: object) -> TopicTransitionRead:
+    return TopicTransitionRead.model_validate(item, from_attributes=True)
+
+
+def to_topic_summary_revision_read(item: object) -> TopicSummaryRevisionRead:
+    return TopicSummaryRevisionRead.model_validate(item, from_attributes=True)
+
+
+def to_message_topic_link_read(item: object) -> MessageTopicLinkRead:
+    return MessageTopicLinkRead.model_validate(item, from_attributes=True)
+
+
+def to_agent_topic_index_read(item: object) -> AgentTopicIndexRead:
+    return AgentTopicIndexRead.model_validate(item, from_attributes=True)
+
+
+def to_context_snapshot_read(item: object) -> ContextSnapshotRead:
+    return ContextSnapshotRead.model_validate(item, from_attributes=True)
+
+
+def to_response_decision_read(item: object) -> ResponseDecisionRead:
+    return ResponseDecisionRead.model_validate(item, from_attributes=True)
+
+
+def to_model_call_read(item: object) -> ModelCallRead:
+    return ModelCallRead.model_validate(item, from_attributes=True)
 
 
 def to_event_read(item: RunEvent) -> SSEEventRead:
@@ -155,7 +192,22 @@ def create_app() -> FastAPI:
 
     @app.get("/health/ready", response_model=HealthResponse, tags=["health"])
     def ready_health(db: Session = Depends(get_db_session)) -> HealthResponse:
-        revision = db.execute(text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
+        engine = db.get_bind()
+        assert isinstance(engine, Engine)
+        try:
+            with engine.connect() as connection:
+                revision = connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one_or_none()
+                connection.exec_driver_sql("BEGIN IMMEDIATE")
+                connection.exec_driver_sql("ROLLBACK")
+        except OperationalError as exc:
+            raise AppError(
+                code="schema_not_ready",
+                status_code=503,
+                message="Database schema is not ready.",
+                details={"expected": settings.ready_schema_revision, "actual": None},
+            ) from exc
         if revision != settings.ready_schema_revision:
             raise AppError(
                 code="schema_not_ready",
@@ -275,8 +327,8 @@ def create_app() -> FastAPI:
         detail = get_topic_detail(db, topic_id=topic_id)
         return TopicDetailResponse(
             topic=to_topic_read(detail.topic),
-            transitions=[item.__dict__ for item in detail.transitions],
-            summaries=[item.__dict__ for item in detail.summaries],
+            transitions=[to_topic_transition_read(item) for item in detail.transitions],
+            summaries=[to_topic_summary_revision_read(item) for item in detail.summaries],
         )
 
     @app.get(
@@ -291,11 +343,11 @@ def create_app() -> FastAPI:
         analysis = get_message_analysis(db, message_id=message_id)
         return MessageAnalysisResponse(
             message=to_message_read(analysis.message),
-            topic_links=analysis.topic_links,
-            agent_indexes=analysis.agent_indexes,
-            snapshots=analysis.snapshots,
-            decisions=analysis.decisions,
-            model_calls=analysis.model_calls,
+            topic_links=[to_message_topic_link_read(item) for item in analysis.topic_links],
+            agent_indexes=[to_agent_topic_index_read(item) for item in analysis.agent_indexes],
+            snapshots=[to_context_snapshot_read(item) for item in analysis.snapshots],
+            decisions=[to_response_decision_read(item) for item in analysis.decisions],
+            model_calls=[to_model_call_read(item) for item in analysis.model_calls],
         )
 
     @app.get("/api/v1/runs/{run_id}", response_model=RunRead, tags=["runs"])

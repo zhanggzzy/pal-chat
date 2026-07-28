@@ -265,6 +265,13 @@ def upgrade() -> None:
         unique=True,
         sqlite_where=sa.text("kind = 'primary'"),
     )
+    op.create_index(
+        "ix_chat_runs_one_active_per_conversation",
+        "chat_runs",
+        ["conversation_id"],
+        unique=True,
+        sqlite_where=sa.text("status IN ('queued', 'running', 'stop_requested')"),
+    )
 
     op.execute(
         """
@@ -289,10 +296,48 @@ def upgrade() -> None:
             END;
             SELECT CASE
                 WHEN (
-                    SELECT outcome
-                    FROM response_decisions
-                    WHERE id = NEW.caused_by_decision_id
-                ) != 'selected'
+                    NOT EXISTS (
+                        SELECT 1
+                        FROM response_decisions
+                        JOIN messages AS trigger_messages
+                          ON trigger_messages.id = response_decisions.trigger_message_id
+                        WHERE response_decisions.id = NEW.caused_by_decision_id
+                          AND response_decisions.outcome = 'selected'
+                          AND response_decisions.run_id = NEW.run_id
+                          AND response_decisions.agent_id = NEW.author_participant_id
+                          AND trigger_messages.conversation_id = NEW.conversation_id
+                    )
+                )
+                THEN RAISE(ABORT, 'agent_message_requires_selected_decision')
+            END;
+        END;
+        """
+    )
+    op.execute(
+        """
+        CREATE TRIGGER agent_message_requires_selected_decision_on_update
+        BEFORE UPDATE OF kind, caused_by_decision_id, run_id, author_participant_id, conversation_id
+        ON messages
+        WHEN NEW.kind = 'agent'
+        BEGIN
+            SELECT CASE
+                WHEN NEW.caused_by_decision_id IS NULL
+                THEN RAISE(ABORT, 'agent_message_requires_decision')
+            END;
+            SELECT CASE
+                WHEN (
+                    NOT EXISTS (
+                        SELECT 1
+                        FROM response_decisions
+                        JOIN messages AS trigger_messages
+                          ON trigger_messages.id = response_decisions.trigger_message_id
+                        WHERE response_decisions.id = NEW.caused_by_decision_id
+                          AND response_decisions.outcome = 'selected'
+                          AND response_decisions.run_id = NEW.run_id
+                          AND response_decisions.agent_id = NEW.author_participant_id
+                          AND trigger_messages.conversation_id = NEW.conversation_id
+                    )
+                )
                 THEN RAISE(ABORT, 'agent_message_requires_selected_decision')
             END;
         END;
@@ -301,8 +346,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute("DROP TRIGGER IF EXISTS agent_message_requires_selected_decision_on_update")
     op.execute("DROP TRIGGER IF EXISTS agent_message_requires_selected_decision")
     op.execute("DROP TRIGGER IF EXISTS chat_runs_terminal_guard")
+    op.drop_index("ix_chat_runs_one_active_per_conversation", table_name="chat_runs")
     op.drop_index("ix_message_primary_topic", table_name="message_topic_links")
     op.drop_index("ix_topics_one_active_per_conversation", table_name="topics")
     op.drop_table("request_idempotency")

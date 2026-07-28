@@ -3,11 +3,10 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, cast
 from uuid import uuid4
 
 from sqlalchemy import Select, func, select
-from sqlalchemy.inspection import inspect
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from pal_chat_server.errors import AppError
@@ -41,11 +40,11 @@ class TopicDetail:
 @dataclass(slots=True)
 class MessageAnalysis:
     message: Message
-    topic_links: list[dict[str, Any]]
-    agent_indexes: list[dict[str, Any]]
-    snapshots: list[dict[str, Any]]
-    decisions: list[dict[str, Any]]
-    model_calls: list[dict[str, Any]]
+    topic_links: list[MessageTopicLink]
+    agent_indexes: list[AgentTopicIndex]
+    snapshots: list[ContextSnapshot]
+    decisions: list[ResponseDecision]
+    model_calls: list[ModelCall]
 
 
 def utc_now() -> datetime:
@@ -155,6 +154,23 @@ def get_active_run(session: Session, conversation_id: str) -> ChatRun | None:
     )
 
 
+def raise_integrity_conflict(exc: IntegrityError) -> None:
+    message = str(exc.orig)
+    if "request_idempotency" in message:
+        raise AppError(
+            code="idempotency_conflict",
+            status_code=409,
+            message="Idempotency key already used with different payload.",
+        ) from exc
+    if "chat_runs.conversation_id" in message:
+        raise AppError(
+            code="run_in_progress",
+            status_code=409,
+            message="A relay run is already active.",
+        ) from exc
+    raise exc
+
+
 def create_conversation(session: Session, *, title: str) -> tuple[Conversation, list[Participant]]:
     now = utc_now()
     conversation = Conversation(
@@ -234,63 +250,83 @@ def create_message_with_run(
         )
 
     now = utc_now()
-    run = ChatRun(
-        id=str(uuid4()),
-        conversation_id=conversation.id,
-        root_user_message_id=None,
-        status=RunStatus.QUEUED.value,
-        stop_reason=None,
-        max_agent_messages=5,
-        max_rounds=6,
-        max_total_tokens=30_000,
-        timeout_ms=90_000,
-        agent_message_count=0,
-        round_count=0,
-        reserved_tokens=0,
-        actual_tokens=0,
-        cancel_generation=0,
-        started_at=now,
-        ended_at=None,
-    )
-    session.add(run)
-    session.flush()
+    try:
+        with session.begin_nested():
+            run = ChatRun(
+                id=str(uuid4()),
+                conversation_id=conversation.id,
+                root_user_message_id=None,
+                status=RunStatus.QUEUED.value,
+                stop_reason=None,
+                max_agent_messages=5,
+                max_rounds=6,
+                max_total_tokens=30_000,
+                timeout_ms=90_000,
+                agent_message_count=0,
+                round_count=0,
+                reserved_tokens=0,
+                actual_tokens=0,
+                cancel_generation=0,
+                started_at=now,
+                ended_at=None,
+            )
+            session.add(run)
+            session.flush()
 
-    message = Message(
-        id=str(uuid4()),
-        conversation_id=conversation.id,
-        run_id=run.id,
-        author_participant_id=user.id,
-        parent_message_id=None,
-        caused_by_decision_id=None,
-        kind=ParticipantKind.USER.value,
-        content=content,
-        sequence_no=next_sequence(session, conversation_id),
-        created_at=now,
-    )
-    session.add(message)
-    session.flush()
-    run.root_user_message_id = message.id
-    add_event(
-        session,
-        conversation_id=conversation.id,
-        run_id=run.id,
-        event_type="message.created",
-        entity_type="message",
-        entity_id=message.id,
-        payload={"sequence_no": message.sequence_no, "kind": message.kind},
-    )
+            message = Message(
+                id=str(uuid4()),
+                conversation_id=conversation.id,
+                run_id=run.id,
+                author_participant_id=user.id,
+                parent_message_id=None,
+                caused_by_decision_id=None,
+                kind=ParticipantKind.USER.value,
+                content=content,
+                sequence_no=next_sequence(session, conversation_id),
+                created_at=now,
+            )
+            session.add(message)
+            session.flush()
+            run.root_user_message_id = message.id
+            add_event(
+                session,
+                conversation_id=conversation.id,
+                run_id=run.id,
+                event_type="message.created",
+                entity_type="message",
+                entity_id=message.id,
+                payload={"sequence_no": message.sequence_no, "kind": message.kind},
+            )
 
-    response = {"message_id": message.id, "run_id": run.id, "status": run.status}
-    session.add(
-        RequestIdempotency(
-            conversation_id=conversation.id,
-            key=idempotency_key,
-            request_hash=request_hash,
-            response_status=202,
-            response_body_json=response,
-            created_at=now,
-        )
-    )
+            response = {"message_id": message.id, "run_id": run.id, "status": run.status}
+            session.add(
+                RequestIdempotency(
+                    conversation_id=conversation.id,
+                    key=idempotency_key,
+                    request_hash=request_hash,
+                    response_status=202,
+                    response_body_json=response,
+                    created_at=now,
+                )
+            )
+            session.flush()
+    except IntegrityError as exc:
+        existing = session.get(RequestIdempotency, (conversation_id, idempotency_key))
+        if existing is not None:
+            if existing.request_hash != request_hash:
+                raise AppError(
+                    code="idempotency_conflict",
+                    status_code=409,
+                    message="Idempotency key already used with different payload.",
+                ) from exc
+            response = existing.response_body_json
+            return {
+                "message_id": str(response["message_id"]),
+                "run_id": str(response["run_id"]),
+                "status": str(response["status"]),
+            }
+        raise_integrity_conflict(exc)
+
     conversation.updated_at = now
     return response
 
@@ -389,41 +425,33 @@ def get_topic_detail(session: Session, *, topic_id: str) -> TopicDetail:
     return TopicDetail(topic=topic, transitions=transitions, summaries=summaries)
 
 
-def serialize_model(model: object) -> dict[str, Any]:
-    mapper = cast(Any, inspect(model)).mapper
-    return {
-        column.key: getattr(model, column.key)
-        for column in mapper.column_attrs
-    }
-
-
 def get_message_analysis(session: Session, *, message_id: str) -> MessageAnalysis:
     message = get_message_or_404(session, message_id)
     topic_links = [
-        serialize_model(item)
+        item
         for item in session.scalars(
             select(MessageTopicLink).where(MessageTopicLink.message_id == message.id)
         ).all()
     ]
     snapshots = [
-        serialize_model(item)
+        item
         for item in session.scalars(
             select(ContextSnapshot).where(ContextSnapshot.trigger_message_id == message.id)
         ).all()
     ]
     decisions = [
-        serialize_model(item)
+        item
         for item in session.scalars(
             select(ResponseDecision).where(ResponseDecision.trigger_message_id == message.id)
         ).all()
     ]
     run_id = message.run_id or ""
     model_calls = [
-        serialize_model(item)
+        item
         for item in session.scalars(select(ModelCall).where(ModelCall.run_id == run_id)).all()
     ]
     agent_indexes = [
-        serialize_model(item)
+        item
         for item in session.scalars(
             select(AgentTopicIndex)
             .where(AgentTopicIndex.last_seen_message_id == message.id)

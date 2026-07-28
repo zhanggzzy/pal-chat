@@ -14,3 +14,9 @@ def test_ready_health(migrated_app: TestClient) -> None:
     assert response.status_code == 200
     assert response.json()["status"] == "ready"
     assert response.json()["schema_revision"] == "20260728_0001"
+
+
+def test_ready_health_without_migration_returns_503(unmigrated_app: TestClient) -> None:
+    response = unmigrated_app.get("/health/ready")
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "schema_not_ready"

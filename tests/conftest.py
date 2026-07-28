@@ -15,6 +15,23 @@ from pal_chat_server.db import reset_db_state
 ROOT_DIR = Path(__file__).resolve().parents[1]
 
 
+def configure_test_env(data_dir: Path) -> Path:
+    db_path = data_dir / "pal-chat.db"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["PAL_CHAT_DATA_DIR"] = str(data_dir)
+    os.environ["PAL_CHAT_DATABASE_URL"] = f"sqlite:///{db_path}"
+    get_settings.cache_clear()
+    reset_db_state()
+    return db_path
+
+
+def clear_test_env() -> None:
+    os.environ.pop("PAL_CHAT_DATA_DIR", None)
+    os.environ.pop("PAL_CHAT_DATABASE_URL", None)
+    get_settings.cache_clear()
+    reset_db_state()
+
+
 @pytest.fixture
 def data_dir(tmp_path: Path) -> Path:
     return tmp_path / "data"
@@ -22,12 +39,7 @@ def data_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def migrated_app(data_dir: Path) -> Generator[TestClient, None, None]:
-    db_path = data_dir / "pal-chat.db"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    os.environ["PAL_CHAT_DATA_DIR"] = str(data_dir)
-    os.environ["PAL_CHAT_DATABASE_URL"] = f"sqlite:///{db_path}"
-    get_settings.cache_clear()
-    reset_db_state()
+    db_path = configure_test_env(data_dir)
 
     config = Config(str(ROOT_DIR / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
@@ -37,7 +49,15 @@ def migrated_app(data_dir: Path) -> Generator[TestClient, None, None]:
     with TestClient(app) as client:
         yield client
 
-    os.environ.pop("PAL_CHAT_DATA_DIR", None)
-    os.environ.pop("PAL_CHAT_DATABASE_URL", None)
-    get_settings.cache_clear()
-    reset_db_state()
+    clear_test_env()
+
+
+@pytest.fixture
+def unmigrated_app(data_dir: Path) -> Generator[TestClient, None, None]:
+    configure_test_env(data_dir)
+
+    app = create_app()
+    with TestClient(app) as client:
+        yield client
+
+    clear_test_env()

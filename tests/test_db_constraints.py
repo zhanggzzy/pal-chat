@@ -9,7 +9,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from pal_chat_server.config import get_settings
-from pal_chat_server.db import reset_db_state
+from pal_chat_server.db import get_engine, reset_db_state
 from pal_chat_server.models import (
     ChatRun,
     ContextSnapshot,
@@ -22,7 +22,7 @@ from pal_chat_server.models import (
     Topic,
 )
 from pal_chat_server.services import ensure_primary_topic_link, utc_now
-from sqlalchemy import create_engine
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -43,7 +43,7 @@ def session(tmp_path: Path) -> Generator[Session, None, None]:
     config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
     command.upgrade(config, "head")
 
-    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    engine = get_engine()
     with Session(engine) as db:
         yield db
         db.rollback()
@@ -282,3 +282,114 @@ def test_primary_topic_link_helper_rejects_duplicate(session: Session) -> None:
 
     with pytest.raises(AppError):
         ensure_primary_topic_link(session, message_id=message.id, topic_id=topic.id)
+
+
+def test_sqlite_pragmas_apply_to_every_connection(session: Session) -> None:
+    engine = get_engine()
+    with engine.connect() as first, engine.connect() as second:
+        first_fk = first.execute(text("PRAGMA foreign_keys")).scalar_one()
+        second_fk = second.execute(text("PRAGMA foreign_keys")).scalar_one()
+        busy_timeout = second.execute(text("PRAGMA busy_timeout")).scalar_one()
+
+    assert first_fk == 1
+    assert second_fk == 1
+    assert busy_timeout == 5000
+
+
+def test_active_run_unique_constraint(session: Session) -> None:
+    conversation, _, _ = seed_conversation(session)
+    first = ChatRun(
+        id=str(uuid4()),
+        conversation_id=conversation.id,
+        root_user_message_id=None,
+        status=RunStatus.QUEUED.value,
+        stop_reason=None,
+        max_agent_messages=5,
+        max_rounds=6,
+        max_total_tokens=30000,
+        timeout_ms=90000,
+        agent_message_count=0,
+        round_count=0,
+        reserved_tokens=0,
+        actual_tokens=0,
+        cancel_generation=0,
+        started_at=utc_now(),
+        ended_at=None,
+    )
+    second = ChatRun(
+        id=str(uuid4()),
+        conversation_id=conversation.id,
+        root_user_message_id=None,
+        status=RunStatus.RUNNING.value,
+        stop_reason=None,
+        max_agent_messages=5,
+        max_rounds=6,
+        max_total_tokens=30000,
+        timeout_ms=90000,
+        agent_message_count=0,
+        round_count=0,
+        reserved_tokens=0,
+        actual_tokens=0,
+        cancel_generation=0,
+        started_at=utc_now(),
+        ended_at=None,
+    )
+    session.add(first)
+    session.commit()
+
+    session.add(second)
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_agent_message_requires_existing_selected_decision(session: Session) -> None:
+    conversation, user, agent = seed_conversation(session)
+    run = ChatRun(
+        id=str(uuid4()),
+        conversation_id=conversation.id,
+        root_user_message_id=None,
+        status=RunStatus.QUEUED.value,
+        stop_reason=None,
+        max_agent_messages=5,
+        max_rounds=6,
+        max_total_tokens=30000,
+        timeout_ms=90000,
+        agent_message_count=0,
+        round_count=0,
+        reserved_tokens=0,
+        actual_tokens=0,
+        cancel_generation=0,
+        started_at=utc_now(),
+        ended_at=None,
+    )
+    user_message = Message(
+        id=str(uuid4()),
+        conversation_id=conversation.id,
+        run_id=run.id,
+        author_participant_id=user.id,
+        parent_message_id=None,
+        caused_by_decision_id=None,
+        kind="user",
+        content="hello",
+        sequence_no=1,
+        created_at=utc_now(),
+    )
+    session.add_all([run, user_message])
+    session.commit()
+
+    session.add(
+        Message(
+            id=str(uuid4()),
+            conversation_id=conversation.id,
+            run_id=run.id,
+            author_participant_id=agent.id,
+            parent_message_id=user_message.id,
+            caused_by_decision_id=str(uuid4()),
+            kind="agent",
+            content="reply",
+            sequence_no=2,
+            created_at=utc_now(),
+        )
+    )
+    with pytest.raises(IntegrityError):
+        session.commit()
