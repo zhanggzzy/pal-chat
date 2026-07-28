@@ -60,6 +60,33 @@ The frontend is intentionally minimal: it verifies that the browser can reach
 the backend, create a conversation, send a message, and inspect the resulting
 records.
 
+### Persistent WSL handoff
+
+For a handoff where the services should keep running after the shell exits:
+
+```bash
+./scripts/serve-wsl.sh
+```
+
+The script will:
+
+- bind the frontend and backend to `0.0.0.0` inside WSL so Windows can reach
+  them through a dedicated `wsl.exe` supervisor process;
+- write PID files under `.dev/wsl-service/`;
+- write persistent logs to `var/log/api.log` and `var/log/web.log`.
+
+Stop the services with:
+
+```bash
+./scripts/stop-wsl.sh
+```
+
+The intended Windows entry points are:
+
+- Frontend: `http://localhost:5173`
+- Backend health: `http://localhost:8000/health/ready`
+- OpenAPI: `http://localhost:8000/docs`
+
 ### Manual setup
 
 1. Install dependencies:
