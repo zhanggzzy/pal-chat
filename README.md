@@ -33,11 +33,41 @@ under `apps/server`:
 
 ## Local setup
 
+### One-command debug startup
+
+Run:
+
+```bash
+./scripts/dev.sh
+```
+
+The script will:
+
+- create `.env` from `.env.example` when missing;
+- install backend (`uv`) and frontend (`npm`) dependencies;
+- run Alembic migrations;
+- start the backend at `http://127.0.0.1:8000`;
+- start the frontend debug console at `http://127.0.0.1:5173`.
+
+Useful local entry points:
+
+- Frontend debug console: `http://127.0.0.1:5173`
+- Backend live health: `http://127.0.0.1:8000/health/live`
+- Backend ready health: `http://127.0.0.1:8000/health/ready`
+- OpenAPI docs: `http://127.0.0.1:8000/docs`
+
+The frontend is intentionally minimal: it verifies that the browser can reach
+the backend, create a conversation, send a message, and inspect the resulting
+records.
+
+### Manual setup
+
 1. Install dependencies:
 
-   ```bash
-   uv sync --group dev
-   ```
+```bash
+uv sync --group dev
+npm --prefix apps/web install
+```
 
 2. Copy `.env.example` to `.env` and set values if needed. By default the app
    uses a local SQLite database under `${XDG_DATA_HOME:-~/.local/share}/pal-chat`.
@@ -54,10 +84,17 @@ under `apps/server`:
    uv run uvicorn pal_chat_server.main:app --app-dir apps/server/src --reload
    ```
 
-5. Run checks:
+5. Start the frontend:
+
+   ```bash
+   npm --prefix apps/web run dev -- --host 127.0.0.1 --port 5173
+   ```
+
+6. Run checks:
 
    ```bash
    uv run ruff check .
    uv run mypy apps/server/src tests
    uv run pytest
+   npm --prefix apps/web run build
    ```

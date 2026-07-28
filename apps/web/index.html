@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>pal-chat debug console</title>
+    <script type="module" src="/src/main.js"></script>
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <p class="eyebrow">pal-chat</p>
+        <h1>Debug console</h1>
+        <p class="subtitle">
+          Minimal frontend entry for local startup verification against the FastAPI backend.
+        </p>
+      </header>
+
+      <main class="layout">
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Backend</h2>
+            <span id="health-badge" class="badge pending">checking</span>
+          </div>
+
+          <label class="field">
+            <span>API base URL</span>
+            <input id="api-base" type="url" value="http://127.0.0.1:8000" />
+          </label>
+
+          <div class="actions">
+            <button id="check-health" type="button">Check health</button>
+          </div>
+
+          <dl class="status-grid">
+            <div>
+              <dt>Live</dt>
+              <dd id="live-status">-</dd>
+            </div>
+            <div>
+              <dt>Ready</dt>
+              <dd id="ready-status">-</dd>
+            </div>
+            <div>
+              <dt>Schema</dt>
+              <dd id="schema-status">-</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Conversation</h2>
+            <span id="conversation-badge" class="badge idle">idle</span>
+          </div>
+
+          <form id="conversation-form" class="stack">
+            <label class="field">
+              <span>Title</span>
+              <input id="conversation-title" name="title" type="text" value="Local debug conversation" />
+            </label>
+            <button type="submit">Create conversation</button>
+          </form>
+
+          <label class="field">
+            <span>Conversation ID</span>
+            <input id="conversation-id" type="text" placeholder="Create one or paste an existing ID" />
+          </label>
+
+          <div class="actions">
+            <button id="refresh-conversation" type="button">Refresh conversation</button>
+          </div>
+
+          <pre id="conversation-output" class="output"></pre>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Message</h2>
+            <span id="message-badge" class="badge idle">idle</span>
+          </div>
+
+          <form id="message-form" class="stack">
+            <label class="field">
+              <span>Message</span>
+              <textarea id="message-content" rows="4" placeholder="Say hello to the agents."></textarea>
+            </label>
+            <button type="submit">Send message</button>
+          </form>
+
+          <div class="actions">
+            <button id="refresh-messages" type="button">Load messages</button>
+          </div>
+
+          <pre id="message-output" class="output"></pre>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
