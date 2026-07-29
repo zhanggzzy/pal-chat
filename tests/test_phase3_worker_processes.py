@@ -397,11 +397,13 @@ def test_h06_live_interruption_invalidates_stale_draft_and_cancels_typing(
     deadline = time.time() + 10
     while time.time() < deadline:
         trace = h06_trace(live_process_server, conversation_id)
-        if runtime_state_for_agent(conversation_id, "agent-a") == {
+        state = runtime_state_for_agent(conversation_id, "agent-a")
+        assert state is not None
+        if state == {
             "active_run_id": None,
             "agent_id": "agent-a",
             "dirty_since_seq": None,
-            "reliable_seq": runtime_state_for_agent(conversation_id, "agent-a")["reliable_seq"],
+            "reliable_seq": state["reliable_seq"],
             "typing_run_id": None,
             "typing_status": "idle",
             "worker_state": "LISTENING",
@@ -430,11 +432,13 @@ def test_h06_live_interruption_invalidates_stale_draft_and_cancels_typing(
         run_ids[0]: ["agent.typing_started", "agent.typing_stopped"],
         run_ids[1]: ["agent.typing_started", "agent.typing_stopped"],
     }, json.dumps(trace, ensure_ascii=False, indent=2, sort_keys=True)
-    assert runtime_state_for_agent(conversation_id, "agent-a") == {
+    final_state = runtime_state_for_agent(conversation_id, "agent-a")
+    assert final_state is not None
+    assert final_state == {
         "active_run_id": None,
         "agent_id": "agent-a",
         "dirty_since_seq": None,
-        "reliable_seq": runtime_state_for_agent(conversation_id, "agent-a")["reliable_seq"],
+        "reliable_seq": final_state["reliable_seq"],
         "typing_run_id": None,
         "typing_status": "idle",
         "worker_state": "LISTENING",

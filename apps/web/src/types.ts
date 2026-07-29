@@ -229,3 +229,55 @@ export interface ReviewState {
   agentId?: string;
   memoryRevision?: string;
 }
+
+export interface AutomaticMetrics {
+  schema_version: number;
+  conversation_id: string;
+  computed_at: string;
+  metrics: Record<string, number | string | null>;
+}
+
+export interface ManualScoreItem {
+  criterion: string;
+  score: number | null;
+  note: string;
+}
+
+export interface ManualScore {
+  schema_version: number;
+  conversation_id: string;
+  rubric_version: string;
+  updated_at: string | null;
+  scores: ManualScoreItem[];
+  overall_score: number | null;
+  overall_note: string;
+}
+
+export interface HistoryEntry {
+  conversation_id: string;
+  title: string | null;
+  status: string | null;
+  created_at: string | null;
+  ended_at: string | null;
+  profile_hash: string | null;
+  adapter_module_id: string | null;
+  adapter_known: boolean;
+}
+
+export interface HistoryDetail {
+  entry: HistoryEntry;
+  raw_manifest: Record<string, unknown>;
+  messages: Record<string, unknown>[];
+  cp_revisions: Record<string, unknown>[];
+  logs: Record<string, unknown>[];
+}
+
+export interface AnalysisExportJob {
+  job_id: string;
+  conversation_id: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  error: string | null;
+  download_url: string | null;
+}

@@ -242,6 +242,16 @@ p {
   opacity: 0.55;
 }
 
+.manual-score-row,
+.export-status {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.export-status a {
+  color: #0b5fff;
+}
+
 .tabs {
   display: flex;
   gap: 0.5rem;

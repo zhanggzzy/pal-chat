@@ -508,3 +508,83 @@ class CostBreakdownRead(BaseModel):
     total_cost_usd: float
     by_agent: dict[str, CostBucketRead] = Field(default_factory=dict)
     by_phase: dict[str, CostBucketRead] = Field(default_factory=dict)
+
+
+class AutomaticMetricsRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: int
+    conversation_id: str
+    computed_at: datetime
+    metrics: dict[str, Any] = Field(default_factory=dict)
+
+
+class ManualScoreItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    criterion: str
+    score: float | None = None
+    note: str = ""
+
+
+class ManualScoreRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: int
+    conversation_id: str
+    rubric_version: str
+    updated_at: datetime | None = None
+    scores: list[ManualScoreItem] = Field(default_factory=list)
+    overall_score: float | None = None
+    overall_note: str = ""
+
+
+class ManualScoreUpsertRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rubric_version: str = Field(min_length=1, max_length=128)
+    scores: list[ManualScoreItem] = Field(default_factory=list)
+    overall_note: str = ""
+
+
+class HistoryEntryRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    conversation_id: str
+    title: str | None = None
+    status: str | None = None
+    created_at: datetime | None = None
+    ended_at: datetime | None = None
+    archive_dir: str | None = None
+    manifest_path: str | None = None
+    profile_hash: str | None = None
+    adapter_module_id: str | None = None
+    adapter_known: bool = False
+
+
+class HistoryListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[HistoryEntryRead] = Field(default_factory=list)
+
+
+class HistoryDetailResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    entry: HistoryEntryRead
+    raw_manifest: dict[str, Any] = Field(default_factory=dict)
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+    cp_revisions: list[dict[str, Any]] = Field(default_factory=list)
+    logs: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AnalysisExportJobRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str
+    conversation_id: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    error: str | None = None
+    download_url: str | None = None

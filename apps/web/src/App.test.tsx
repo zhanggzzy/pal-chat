@@ -102,6 +102,40 @@ describe("App", () => {
         if (url.endsWith("/api/v1/conversations/conv-1")) {
           return jsonResponse({ conversation });
         }
+        if (url.endsWith("/api/v1/history")) {
+          return jsonResponse({
+            items: [
+              {
+                conversation_id: "conv-1",
+                title: "Monitoring",
+                status: "ended",
+                created_at: "2026-07-29T10:00:00Z",
+                ended_at: "2026-07-29T10:10:00Z",
+                profile_hash: "hash-1",
+                adapter_module_id: "model.legacy-unknown",
+                adapter_known: false,
+              },
+            ],
+          });
+        }
+        if (url.endsWith("/api/v1/history/conv-1")) {
+          return jsonResponse({
+            entry: {
+              conversation_id: "conv-1",
+              title: "Monitoring",
+              status: "ended",
+              created_at: "2026-07-29T10:00:00Z",
+              ended_at: "2026-07-29T10:10:00Z",
+              profile_hash: "hash-1",
+              adapter_module_id: "model.legacy-unknown",
+              adapter_known: false,
+            },
+            raw_manifest: { catalog_metadata: { api_token: "[REDACTED]" } },
+            messages: [],
+            cp_revisions: [],
+            logs: [],
+          });
+        }
         if (url.endsWith("/messages")) {
           return jsonResponse({ items: [] });
         }
@@ -119,6 +153,36 @@ describe("App", () => {
         }
         if (url.endsWith("/metrics/cost-breakdown")) {
           return jsonResponse({ total_tokens: 0, total_cost_usd: 0, by_agent: {}, by_phase: {} });
+        }
+        if (url.endsWith("/metrics/automatic")) {
+          return jsonResponse({
+            schema_version: 1,
+            conversation_id: "conv-1",
+            computed_at: "2026-07-29T10:00:00Z",
+            metrics: { message_count: 0, committed_run_count: 0 },
+          });
+        }
+        if (url.endsWith("/manual-score")) {
+          return jsonResponse({
+            schema_version: 1,
+            conversation_id: "conv-1",
+            rubric_version: "manual-score-v1",
+            updated_at: "2026-07-29T10:00:00Z",
+            scores: [],
+            overall_score: null,
+            overall_note: "",
+          });
+        }
+        if (url.endsWith("/analysis-exports") && init?.method === "POST") {
+          return jsonResponse({
+            job_id: "job-1",
+            conversation_id: "conv-1",
+            status: "ready",
+            created_at: "2026-07-29T10:00:00Z",
+            updated_at: "2026-07-29T10:00:00Z",
+            error: null,
+            download_url: "/api/v1/conversations/conv-1/analysis-exports/job-1/download",
+          });
         }
         if (url.includes("/memory/revisions")) {
           return jsonResponse({
@@ -143,6 +207,10 @@ describe("App", () => {
     expect(screen.getByText("费用估算")).toBeInTheDocument();
     expect(screen.getByText("估算/解释性数据，非账单")).toBeInTheDocument();
     expect(screen.queryByText(/^Total Cost$/)).not.toBeInTheDocument();
+    expect(screen.getByText("历史目录")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("raw fallback")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("历史档案 / Raw Fallback")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("自动指标")).toBeInTheDocument());
 
     fireEvent.click(screen.getByText("A 私有视图"));
     await waitFor(() => expect(screen.getByText("Raw Memory JSON")).toBeInTheDocument());

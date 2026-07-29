@@ -10,13 +10,23 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, Request, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from pal_chat_server.agent_runtime import is_agent_runtime_enabled
+from pal_chat_server.analysis import (
+    analysis_export_download_path,
+    compute_automatic_metrics,
+    create_analysis_export_job,
+    get_analysis_export_job,
+    get_history_detail,
+    list_history_entries,
+    load_manual_score,
+    save_manual_score,
+)
 from pal_chat_server.config import Settings, get_settings
 from pal_chat_server.db import (
     ensure_catalog_schema,
@@ -40,7 +50,9 @@ from pal_chat_server.monitoring import (
 from pal_chat_server.schemas import (
     AgentRunListResponse,
     AgentRunRead,
+    AnalysisExportJobRead,
     AttemptListResponse,
+    AutomaticMetricsRead,
     BootstrapResponse,
     CatalogMetadataPatchRequest,
     CausalEpisodeListResponse,
@@ -62,8 +74,12 @@ from pal_chat_server.schemas import (
     ExperimentProfile,
     GuardrailPatchRequest,
     HealthResponse,
+    HistoryDetailResponse,
+    HistoryListResponse,
     LogEntryListResponse,
     LogEntryRead,
+    ManualScoreRead,
+    ManualScoreUpsertRequest,
     MemoryRevisionListResponse,
     MemoryRevisionRead,
     MessageCommitResponse,
@@ -1149,6 +1165,140 @@ def create_app() -> FastAPI:
         conversation = get_conversation_or_404(db, conversation_id)
         payload = get_cost_breakdown(conversation, profile=conversation_profile(conversation))
         return CostBreakdownRead.model_validate(payload)
+
+    @app.get(
+        "/api/v1/conversations/{conversation_id}/metrics/automatic",
+        response_model=AutomaticMetricsRead,
+        tags=["monitoring"],
+    )
+    def get_conversation_automatic_metrics(
+        conversation_id: str,
+        db: Session = Depends(get_db_session),
+    ) -> AutomaticMetricsRead:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        return AutomaticMetricsRead.model_validate(compute_automatic_metrics(conversation))
+
+    @app.get(
+        "/api/v1/conversations/{conversation_id}/manual-score",
+        response_model=ManualScoreRead,
+        tags=["monitoring"],
+    )
+    def get_conversation_manual_score(
+        conversation_id: str,
+        db: Session = Depends(get_db_session),
+    ) -> ManualScoreRead:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        return ManualScoreRead.model_validate(load_manual_score(conversation))
+
+    @app.put(
+        "/api/v1/conversations/{conversation_id}/manual-score",
+        response_model=ManualScoreRead,
+        tags=["monitoring"],
+    )
+    def put_conversation_manual_score(
+        conversation_id: str,
+        request: ManualScoreUpsertRequest,
+        db: Session = Depends(get_db_session),
+    ) -> ManualScoreRead:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        payload = save_manual_score(
+            conversation,
+            rubric_version=request.rubric_version,
+            scores=[item.model_dump(mode="json") for item in request.scores],
+            overall_note=request.overall_note,
+        )
+        return ManualScoreRead.model_validate(payload)
+
+    @app.get(
+        "/api/v1/history",
+        response_model=HistoryListResponse,
+        tags=["monitoring"],
+    )
+    def get_history_index(
+        db: Session = Depends(get_db_session),
+    ) -> HistoryListResponse:
+        _catalog_bootstrap(db, settings)
+        items = list_history_entries(settings)
+        return HistoryListResponse.model_validate({"items": items})
+
+    @app.get(
+        "/api/v1/history/{conversation_id}",
+        response_model=HistoryDetailResponse,
+        tags=["monitoring"],
+    )
+    def get_history_archive(
+        conversation_id: str,
+        db: Session = Depends(get_db_session),
+    ) -> HistoryDetailResponse:
+        _catalog_bootstrap(db, settings)
+        return HistoryDetailResponse.model_validate(get_history_detail(settings, conversation_id))
+
+    def _analysis_job_response(
+        conversation_id: str,
+        payload: dict[str, Any],
+    ) -> AnalysisExportJobRead:
+        return AnalysisExportJobRead.model_validate(
+            {
+                "job_id": payload["job_id"],
+                "conversation_id": payload["conversation_id"],
+                "status": payload["status"],
+                "created_at": payload["created_at"],
+                "updated_at": payload["updated_at"],
+                "error": payload.get("error"),
+                "download_url": (
+                    f"/api/v1/conversations/{conversation_id}/analysis-exports/{payload['job_id']}/download"
+                    if payload["status"] == "ready"
+                    else None
+                ),
+            }
+        )
+
+    @app.post(
+        "/api/v1/conversations/{conversation_id}/analysis-exports",
+        response_model=AnalysisExportJobRead,
+        status_code=status.HTTP_202_ACCEPTED,
+        tags=["monitoring"],
+    )
+    def post_conversation_analysis_export(
+        conversation_id: str,
+        db: Session = Depends(get_db_session),
+    ) -> AnalysisExportJobRead:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        payload = create_analysis_export_job(conversation, settings=settings)
+        return _analysis_job_response(conversation_id, payload)
+
+    @app.get(
+        "/api/v1/conversations/{conversation_id}/analysis-exports/{job_id}",
+        response_model=AnalysisExportJobRead,
+        tags=["monitoring"],
+    )
+    def get_conversation_analysis_export(
+        conversation_id: str,
+        job_id: str,
+        db: Session = Depends(get_db_session),
+    ) -> AnalysisExportJobRead:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        payload = get_analysis_export_job(conversation, job_id)
+        return _analysis_job_response(conversation_id, payload)
+
+    @app.get(
+        "/api/v1/conversations/{conversation_id}/analysis-exports/{job_id}/download",
+        tags=["monitoring"],
+    )
+    def download_conversation_analysis_export(
+        conversation_id: str,
+        job_id: str,
+        db: Session = Depends(get_db_session),
+    ) -> FileResponse:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        path = analysis_export_download_path(conversation, job_id)
+        return FileResponse(path, media_type="application/zip", filename=path.name)
 
     @app.websocket("/ws/v1/conversations/{conversation_id}")
     async def conversation_events(

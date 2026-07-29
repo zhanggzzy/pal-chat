@@ -1,16 +1,28 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
-import { loadWorkbench, requestJson } from "./api";
+import {
+  createAnalysisExport,
+  getAnalysisExport,
+  loadHistoryDetail,
+  loadWorkbench,
+  requestJson,
+  saveManualScore,
+} from "./api";
 import { applySocketPayload, emptyRuntimeViewState, inferRunForMessage, upsertMessage } from "./state";
 import "./styles.css";
 import type {
+  AnalysisExportJob,
   AgentProfile,
   AgentRun,
+  AutomaticMetrics,
   ContextBundle,
   ConversationRead,
   CostBreakdown,
   CpRevision,
+  HistoryDetail,
+  HistoryEntry,
   LogEntry,
+  ManualScore,
   MemoryRevision,
   Message,
   OutboxEvent,
@@ -45,6 +57,23 @@ function fallbackUrl(): string {
       : window.location.origin;
   }
   return "http://127.0.0.1:8000";
+}
+
+function normalizeManualScore(payload: ManualScore | null): ManualScore | null {
+  if (!payload) {
+    return null;
+  }
+  if (payload.scores.length > 0) {
+    return payload;
+  }
+  return {
+    ...payload,
+    scores: [
+      { criterion: "clarity", score: null, note: "" },
+      { criterion: "safety", score: null, note: "" },
+      { criterion: "traceability", score: null, note: "" },
+    ],
+  };
 }
 
 function agentProfiles(conversation: ConversationRead | null): [AgentProfile, AgentProfile] | null {
@@ -84,6 +113,12 @@ export function App(): JSX.Element {
   const [memoryByAgent, setMemoryByAgent] = useState<Record<string, MemoryRevision[]>>({});
   const [contextByAgent, setContextByAgent] = useState<Record<string, ContextBundle[]>>({});
   const [attemptsByAgent, setAttemptsByAgent] = useState<Record<string, AgentRun["attempts"]>>({});
+  const [automaticMetrics, setAutomaticMetrics] = useState<AutomaticMetrics | null>(null);
+  const [manualScore, setManualScore] = useState<ManualScore | null>(null);
+  const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string>("");
+  const [historyDetail, setHistoryDetail] = useState<HistoryDetail | null>(null);
+  const [exportJob, setExportJob] = useState<AnalysisExportJob | null>(null);
   const [selectedConversationId, setSelectedConversationId] = useState<string>("");
   const [selectedMessageId, setSelectedMessageId] = useState<string>("");
   const [selectedRunId, setSelectedRunId] = useState<string>("");
@@ -122,6 +157,12 @@ export function App(): JSX.Element {
     setMemoryByAgent(payload.memoryByAgent);
     setContextByAgent(payload.contextByAgent);
     setAttemptsByAgent(payload.attemptsByAgent);
+    setAutomaticMetrics(payload.automaticMetrics);
+    setManualScore(normalizeManualScore(payload.manualScore));
+    setHistoryEntries(payload.history);
+    if (!selectedHistoryId && payload.history.length > 0) {
+      setSelectedHistoryId(payload.history[0].conversation_id);
+    }
     setGuardrailsDraft(payload.detail.guardrails);
     setRuntimeState({
       ...emptyRuntimeViewState(),
@@ -173,6 +214,17 @@ export function App(): JSX.Element {
       setErrorText(error instanceof Error ? error.message : "同步失败");
     });
   }, [apiBase, selectedConversationId]);
+
+  useEffect(() => {
+    if (!selectedHistoryId) {
+      return;
+    }
+    void loadHistoryDetail(apiBase, selectedHistoryId)
+      .then((payload) => setHistoryDetail(payload))
+      .catch((error: unknown) => {
+        setErrorText(error instanceof Error ? error.message : "历史档案读取失败");
+      });
+  }, [apiBase, selectedHistoryId]);
 
   useEffect(() => {
     if (!selectedConversationId) {
@@ -229,6 +281,18 @@ export function App(): JSX.Element {
       setGuardrailsDraft(runtimeState.guardrails);
     }
   }, [runtimeState.guardrails]);
+
+  useEffect(() => {
+    if (!conversation || !exportJob || exportJob.status === "ready" || exportJob.status === "failed") {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void getAnalysisExport(apiBase, conversation.id, exportJob.job_id)
+        .then((payload) => setExportJob(payload))
+        .catch(() => undefined);
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [apiBase, conversation, exportJob]);
 
   async function handleSubmitMessage(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -311,6 +375,40 @@ export function App(): JSX.Element {
     }
   }
 
+  async function handleManualScoreSave(): Promise<void> {
+    if (!conversation || !manualScore) {
+      return;
+    }
+    if (reviewState !== null) {
+      setErrorText("回看模式下禁止写请求。");
+      return;
+    }
+    try {
+      const payload = await saveManualScore(apiBase, conversation.id, {
+        rubric_version: manualScore.rubric_version,
+        scores: manualScore.scores,
+        overall_note: manualScore.overall_note,
+      });
+      setManualScore(normalizeManualScore(payload));
+      setStatusText("人工评分已保存");
+    } catch (error) {
+      setErrorText(error instanceof Error ? error.message : "人工评分保存失败");
+    }
+  }
+
+  async function handleCreateExport(): Promise<void> {
+    if (!conversation) {
+      return;
+    }
+    try {
+      const payload = await createAnalysisExport(apiBase, conversation.id);
+      setExportJob(payload);
+      setStatusText("分析 ZIP 已排队");
+    } catch (error) {
+      setErrorText(error instanceof Error ? error.message : "分析导出创建失败");
+    }
+  }
+
   function exitReview(): void {
     setReviewState(null);
     if (selectedConversationId && needsReviewResync) {
@@ -353,7 +451,7 @@ export function App(): JSX.Element {
     <div className="shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">pal-chat / phase 5</p>
+          <p className="eyebrow">pal-chat / phase 6</p>
           <h1>监控工作台</h1>
         </div>
         <label className="endpoint">
@@ -396,6 +494,28 @@ export function App(): JSX.Element {
                   <strong>{item.title}</strong>
                   <span>{item.status}</span>
                   <span>{formatTime(item.updated_at)}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel-card">
+            <header className="panel-card-head">
+              <h2>历史目录</h2>
+            </header>
+            <div className="conversation-list" role="list">
+              {historyEntries.map((item) => (
+                <button
+                  key={item.conversation_id}
+                  type="button"
+                  className={
+                    item.conversation_id === selectedHistoryId ? "conversation-item active" : "conversation-item"
+                  }
+                  onClick={() => setSelectedHistoryId(item.conversation_id)}
+                >
+                  <strong>{item.title ?? item.conversation_id}</strong>
+                  <span>{item.adapter_known ? item.adapter_module_id : "raw fallback"}</span>
+                  <span>{formatTime(item.ended_at ?? item.created_at)}</span>
                 </button>
               ))}
             </div>
@@ -564,6 +684,138 @@ export function App(): JSX.Element {
                   </div>
                 ) : null}
               </section>
+
+              <section className="panel-card">
+                <header className="panel-card-head">
+                  <h3>阶段 6 评估与导出</h3>
+                </header>
+                <dl className="metric-grid">
+                  <div>
+                    <dt>自动指标时间</dt>
+                    <dd>{formatTime(automaticMetrics?.computed_at)}</dd>
+                  </div>
+                  <div>
+                    <dt>人工总分</dt>
+                    <dd>{manualScore?.overall_score ?? "-"}</dd>
+                  </div>
+                </dl>
+                {automaticMetrics ? <RawJsonCard title="自动指标" value={automaticMetrics} /> : null}
+                {manualScore ? (
+                  <div className="guardrails-form">
+                    {manualScore.scores.length === 0 ? (
+                      <label>
+                        <span>默认评分项</span>
+                        <input
+                          aria-label="Manual Score Criterion"
+                          value="clarity"
+                          onChange={() => undefined}
+                          disabled
+                        />
+                      </label>
+                    ) : null}
+                    {manualScore.scores.map((item, index) => (
+                      <div key={`${item.criterion}-${index}`} className="manual-score-row">
+                        <label>
+                          <span>{item.criterion}</span>
+                          <input
+                            aria-label={`${item.criterion} score`}
+                            type="number"
+                            min={0}
+                            max={5}
+                            step={0.5}
+                            value={item.score ?? ""}
+                            onChange={(event) =>
+                              setManualScore({
+                                ...manualScore,
+                                scores: manualScore.scores.map((scoreItem, scoreIndex) =>
+                                  scoreIndex === index
+                                    ? {
+                                        ...scoreItem,
+                                        score:
+                                          event.target.value === ""
+                                            ? null
+                                            : Number(event.target.value),
+                                      }
+                                    : scoreItem,
+                                ),
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          <span>Note</span>
+                          <input
+                            aria-label={`${item.criterion} note`}
+                            value={item.note}
+                            onChange={(event) =>
+                              setManualScore({
+                                ...manualScore,
+                                scores: manualScore.scores.map((scoreItem, scoreIndex) =>
+                                  scoreIndex === index
+                                    ? { ...scoreItem, note: event.target.value }
+                                    : scoreItem,
+                                ),
+                              })
+                            }
+                          />
+                        </label>
+                      </div>
+                    ))}
+                    <label>
+                      <span>总体备注</span>
+                      <input
+                        aria-label="Manual Score Overall Note"
+                        value={manualScore.overall_note}
+                        onChange={(event) =>
+                          setManualScore({ ...manualScore, overall_note: event.target.value })
+                        }
+                      />
+                    </label>
+                    <button type="button" onClick={() => void handleManualScoreSave()}>
+                      保存人工评分
+                    </button>
+                    <button type="button" onClick={() => void handleCreateExport()}>
+                      生成分析 ZIP
+                    </button>
+                    {exportJob ? (
+                      <div className="export-status">
+                        <strong>导出状态</strong>
+                        <span>{exportJob.status}</span>
+                        {exportJob.download_url ? (
+                          <a href={`${apiBase.replace(/\/$/, "")}${exportJob.download_url}`}>下载 ZIP</a>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </section>
+
+              {historyDetail ? (
+                <section className="panel-card">
+                  <header className="panel-card-head">
+                    <h3>历史档案 / Raw Fallback</h3>
+                  </header>
+                  <dl className="metric-grid">
+                    <div>
+                      <dt>Adapter</dt>
+                      <dd>{historyDetail.entry.adapter_module_id ?? "unknown"}</dd>
+                    </div>
+                    <div>
+                      <dt>兼容状态</dt>
+                      <dd>{historyDetail.entry.adapter_known ? "当前可识别" : "raw fallback"}</dd>
+                    </div>
+                  </dl>
+                  <RawJsonCard title="历史 Raw Manifest" value={historyDetail.raw_manifest} />
+                  <RawJsonCard
+                    title="历史公共视图"
+                    value={{
+                      messages: historyDetail.messages,
+                      cp_revisions: historyDetail.cp_revisions,
+                      logs: historyDetail.logs,
+                    }}
+                  />
+                </section>
+              ) : null}
 
               <RawJsonCard title="Server Logs" value={logs} />
             </div>
