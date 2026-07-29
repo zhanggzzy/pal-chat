@@ -28,6 +28,13 @@ class MessagePayload:
     mentions: list[str]
     primary_reply_to: str | None
     responds_to: list[str]
+    sender_kind: str = "user"
+    sender_id: str = "user"
+    expected_conversation_seq: int | None = None
+    idempotency_key: str | None = None
+    causal_episode_id: str | None = None
+    caused_by_message_id: str | None = None
+    agent_hop: int = 0
 
 
 @dataclass(slots=True)
@@ -100,6 +107,13 @@ def message_request_hash(payload: MessagePayload) -> str:
             "mentions": payload.mentions,
             "primary_reply_to": payload.primary_reply_to,
             "responds_to": payload.responds_to,
+            "sender_kind": payload.sender_kind,
+            "sender_id": payload.sender_id,
+            "expected_conversation_seq": payload.expected_conversation_seq,
+            "idempotency_key": payload.idempotency_key,
+            "causal_episode_id": payload.causal_episode_id,
+            "caused_by_message_id": payload.caused_by_message_id,
+            "agent_hop": payload.agent_hop,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -140,6 +154,16 @@ def parse_projection_steps(profile: ExperimentProfile) -> list[ProjectionStep]:
     return [ProjectionStep(**item) for item in steps]
 
 
+def budget_limits(profile: ExperimentProfile) -> tuple[int, int, int]:
+    selection = profile.modules.get("budget")
+    config = selection.config if selection is not None else {}
+    return (
+        int(config.get("max_agent_actions_per_episode", 4)),
+        int(config.get("max_actions_per_agent_per_episode", 2)),
+        int(config.get("max_consecutive_agent_hops", 2)),
+    )
+
+
 def apply_projection(
     *,
     profile: ExperimentProfile,
@@ -163,9 +187,6 @@ def apply_projection(
             break
     else:
         operation = "START_NEW_SEGMENT" if not segments else "APPEND_CURRENT"
-
-    if "[cp-fail]" in content_markdown:
-        raise ProjectionError("Projection failed for scripted failure marker")
 
     if strategy_id == "projection.fixed-window":
         window_size = int(selection.config.get("window_size", 2))
@@ -403,6 +424,111 @@ def validate_message_payload(
             )
 
 
+def enforce_episode_budget(
+    *,
+    connection: sqlite3.Connection,
+    profile: ExperimentProfile,
+    payload: MessagePayload,
+    now: str,
+) -> None:
+    if payload.sender_kind != "agent" or payload.causal_episode_id is None:
+        return
+    max_actions, max_actions_per_agent, max_hops = budget_limits(profile)
+    if payload.agent_hop > max_hops:
+        raise AppError(
+            code="budget_exhausted",
+            status_code=409,
+            message="Agent hop budget exhausted.",
+        )
+    row = connection.execute(
+        """
+        SELECT total_actions, agent_a_actions, agent_b_actions, max_agent_hop
+        FROM causal_episode_budget
+        WHERE episode_id = ?
+        """,
+        (payload.causal_episode_id,),
+    ).fetchone()
+    total_actions = int(row["total_actions"]) if row is not None else 0
+    agent_a_actions = int(row["agent_a_actions"]) if row is not None else 0
+    agent_b_actions = int(row["agent_b_actions"]) if row is not None else 0
+    if total_actions + 1 > max_actions:
+        raise AppError(
+            code="budget_exhausted",
+            status_code=409,
+            message="Episode action budget exhausted.",
+        )
+    if payload.sender_id == profile.agent_a.agent_id:
+        if agent_a_actions + 1 > max_actions_per_agent:
+            raise AppError(
+                code="budget_exhausted",
+                status_code=409,
+                message="Agent action budget exhausted.",
+            )
+    elif payload.sender_id == profile.agent_b.agent_id:
+        if agent_b_actions + 1 > max_actions_per_agent:
+            raise AppError(
+                code="budget_exhausted",
+                status_code=409,
+                message="Agent action budget exhausted.",
+            )
+    else:
+        raise AppError(
+            code="unknown_agent",
+            status_code=409,
+            message="Unknown agent sender.",
+        )
+
+
+def record_episode_budget(
+    *,
+    connection: sqlite3.Connection,
+    profile: ExperimentProfile,
+    payload: MessagePayload,
+    now: str,
+) -> None:
+    if payload.sender_kind != "agent" or payload.causal_episode_id is None:
+        return
+    row = connection.execute(
+        """
+        SELECT total_actions, agent_a_actions, agent_b_actions, max_agent_hop
+        FROM causal_episode_budget
+        WHERE episode_id = ?
+        """,
+        (payload.causal_episode_id,),
+    ).fetchone()
+    total_actions = int(row["total_actions"]) if row is not None else 0
+    agent_a_actions = int(row["agent_a_actions"]) if row is not None else 0
+    agent_b_actions = int(row["agent_b_actions"]) if row is not None else 0
+    max_agent_hop = int(row["max_agent_hop"]) if row is not None else 0
+    if payload.sender_id == profile.agent_a.agent_id:
+        agent_a_actions += 1
+    elif payload.sender_id == profile.agent_b.agent_id:
+        agent_b_actions += 1
+    connection.execute(
+        """
+        INSERT INTO causal_episode_budget(
+          episode_id, root_message_ids_json, total_actions, agent_a_actions,
+          agent_b_actions, max_agent_hop, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(episode_id) DO UPDATE SET
+          total_actions = excluded.total_actions,
+          agent_a_actions = excluded.agent_a_actions,
+          agent_b_actions = excluded.agent_b_actions,
+          max_agent_hop = excluded.max_agent_hop,
+          updated_at = excluded.updated_at
+        """,
+        (
+            payload.causal_episode_id,
+            json.dumps([], ensure_ascii=False),
+            total_actions + 1,
+            agent_a_actions,
+            agent_b_actions,
+            max(max_agent_hop, payload.agent_hop),
+            now,
+        ),
+    )
+
+
 def commit_message(
     conversation: ConversationRecord,
     *,
@@ -415,6 +541,24 @@ def commit_message(
         connection.execute("BEGIN IMMEDIATE")
         request_hash = message_request_hash(payload)
         now = utc_now(clock).isoformat()
+        current_seq_row = connection.execute(
+            "SELECT COALESCE(MAX(conversation_seq), 0) AS max_seq FROM messages"
+        ).fetchone()
+        current_seq = int(current_seq_row["max_seq"])
+        if (
+            payload.expected_conversation_seq is not None
+            and payload.expected_conversation_seq != current_seq
+        ):
+            connection.rollback()
+            raise AppError(
+                code="stale_sequence",
+                status_code=409,
+                message="Conversation sequence is stale.",
+                details={
+                    "expected_conversation_seq": payload.expected_conversation_seq,
+                    "actual_conversation_seq": current_seq,
+                },
+            )
         existing_submission = connection.execute(
             """
             SELECT *
@@ -442,6 +586,12 @@ def commit_message(
                 connection.commit()
                 return message, cp_revision, []
         validate_message_payload(payload, profile=profile, connection=connection)
+        enforce_episode_budget(
+            connection=connection,
+            profile=profile,
+            payload=payload,
+            now=now,
+        )
         connection.execute(
             """
             INSERT INTO submissions(
@@ -475,10 +625,7 @@ def commit_message(
                 now,
             ),
         )
-        current_seq_row = connection.execute(
-            "SELECT COALESCE(MAX(conversation_seq), 0) AS max_seq FROM messages"
-        ).fetchone()
-        next_seq = int(current_seq_row["max_seq"]) + 1
+        next_seq = current_seq + 1
         current_revision, current_snapshot = fetch_latest_cp_snapshot(connection)
         try:
             next_revision, snapshot = apply_projection(
@@ -532,15 +679,15 @@ def commit_message(
             (
                 message_id,
                 next_seq,
-                "user",
-                "user",
+                payload.sender_kind,
+                payload.sender_id,
                 payload.content_markdown,
                 payload.primary_reply_to,
-                None,
-                payload.primary_reply_to,
-                0,
+                payload.causal_episode_id,
+                payload.caused_by_message_id or payload.primary_reply_to,
+                payload.agent_hop,
                 payload.client_message_id,
-                payload.client_message_id,
+                payload.idempotency_key or payload.client_message_id,
                 now,
                 now,
                 next_revision,
@@ -588,6 +735,12 @@ def commit_message(
             """,
             ("committed", message_id, now, payload.client_message_id),
         )
+        record_episode_budget(
+            connection=connection,
+            profile=profile,
+            payload=payload,
+            now=now,
+        )
         outbox_events = [
             (
                 generate_ulid(),
@@ -607,8 +760,8 @@ def commit_message(
                     "message": {
                         "message_id": message_id,
                         "conversation_seq": next_seq,
-                        "sender_kind": "user",
-                        "sender_id": "user",
+                        "sender_kind": payload.sender_kind,
+                        "sender_id": payload.sender_id,
                         "content_markdown": payload.content_markdown,
                         "mentions": payload.mentions,
                         "primary_reply_to": payload.primary_reply_to,

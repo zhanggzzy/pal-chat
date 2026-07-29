@@ -159,14 +159,35 @@ def test_h02_concurrent_commits_keep_contiguous_sequence(migrated_app: TestClien
 
 
 def test_h12_failed_projection_does_not_consume_sequence(migrated_app: TestClient) -> None:
-    conversation = create_running_conversation(migrated_app, title="Failure Demo")
+    profile = default_profile_payload(migrated_app)
+    modules = cast(dict[str, dict[str, Any]], profile["modules"])
+    modules["projection"] = {
+        "module_id": "projection.segment-chain",
+        "config": {
+            "script": [
+                {
+                    "match_contains": "should not commit",
+                    "operation": "START_NEW_SEGMENT",
+                    "fail": True,
+                }
+            ]
+        },
+    }
+    created = migrated_app.post(
+        "/api/v1/conversations",
+        json={"title": "Failure Demo", "draft_profile": profile},
+    )
+    assert created.status_code == 201
+    conversation = cast(dict[str, Any], created.json())
     conversation_id = cast(str, conversation["id"])
+    assert migrated_app.post(f"/api/v1/conversations/{conversation_id}/validate").status_code == 200
+    assert migrated_app.post(f"/api/v1/conversations/{conversation_id}/start").status_code == 200
 
     failed = submit_message(
         migrated_app,
         conversation_id,
         client_message_id="fail-001",
-        content_markdown="[cp-fail] should not commit",
+        content_markdown="should not commit",
     )
     assert failed.status_code == 409
     assert failed.json()["error"]["code"] == "projection_failed"

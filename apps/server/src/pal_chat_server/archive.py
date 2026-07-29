@@ -93,6 +93,46 @@ TRANSCRIPT_SCHEMA = (
       created_at TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_runtime_state (
+      agent_id TEXT PRIMARY KEY,
+      worker_state TEXT NOT NULL,
+      reliable_seq INTEGER NOT NULL,
+      dirty_since_seq INTEGER NULL,
+      pending_message_ids_json TEXT NOT NULL DEFAULT '[]',
+      pending_root_message_ids_json TEXT NOT NULL DEFAULT '[]',
+      active_run_id TEXT NULL,
+      typing_status TEXT NOT NULL,
+      restart_count INTEGER NOT NULL DEFAULT 0,
+      profile_hash TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_runs (
+      run_id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      phase TEXT NOT NULL,
+      observation_message_ids_json TEXT NOT NULL,
+      root_message_ids_json TEXT NOT NULL,
+      expected_conversation_seq INTEGER NOT NULL,
+      profile_hash TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL,
+      causal_episode_id TEXT NULL,
+      caused_by_message_id TEXT NULL,
+      agent_hop INTEGER NOT NULL DEFAULT 0,
+      decision_json TEXT NULL,
+      draft_message_json TEXT NULL,
+      earliest_send_at TEXT NULL,
+      invalidated_by_seq INTEGER NULL,
+      error_code TEXT NULL,
+      error_message TEXT NULL,
+      started_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      finished_at TEXT NULL
+    )
+    """,
 )
 
 
@@ -151,7 +191,6 @@ def build_file_manifest(root: Path) -> list[dict[str, Any]]:
 def write_manifest(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
     manifest_path = root / "manifest.json"
     snapshot = dict(payload)
-    snapshot["files"] = build_file_manifest(root)
     snapshot["files"] = build_file_manifest(root)
     manifest_path.write_text(
         json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True) + "\n",

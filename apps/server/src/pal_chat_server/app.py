@@ -21,6 +21,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from pal_chat_server.agent_runtime import AgentRuntimeManager
 from pal_chat_server.config import Settings, get_settings
 from pal_chat_server.db import (
     ensure_catalog_schema,
@@ -113,6 +114,7 @@ def _catalog_bootstrap(db: Session, settings: Settings) -> None:
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    runtime_manager = AgentRuntimeManager()
     app = FastAPI(
         title="pal-chat API",
         version=settings.app_version,
@@ -130,6 +132,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.state.runtime_manager = runtime_manager
 
     def conversation_profile(conversation: ConversationRecord) -> ExperimentProfile:
         locked = getattr(conversation, "locked_profile_json", None)
@@ -142,6 +145,9 @@ def create_app() -> FastAPI:
                 message="Conversation profile is missing.",
             )
         return ExperimentProfile.model_validate(source)
+
+    def get_runtime_manager() -> AgentRuntimeManager:
+        return app.state.runtime_manager  # type: ignore[no-any-return]
 
     def ensure_conversation_write_allowed(conversation_status: str) -> None:
         if conversation_status == ConversationStatus.RUNNING.value:
@@ -486,11 +492,17 @@ def create_app() -> FastAPI:
         db: Session = Depends(get_db_session),
     ) -> ConversationRead:
         _catalog_bootstrap(db, settings)
-        return start_conversation(
+        conversation = start_conversation(
             db,
             conversation_id=conversation_id,
             settings=settings,
         )
+        record = get_conversation_or_404(db, conversation_id)
+        get_runtime_manager().register_conversation(
+            record,
+            profile=conversation_profile(record),
+        )
+        return conversation
 
     @app.post(
         "/api/v1/conversations/{conversation_id}/pause",
@@ -502,11 +514,13 @@ def create_app() -> FastAPI:
         db: Session = Depends(get_db_session),
     ) -> ConversationRead:
         _catalog_bootstrap(db, settings)
-        return pause_conversation(
+        conversation = pause_conversation(
             db,
             conversation_id=conversation_id,
             settings=settings,
         )
+        get_runtime_manager().pause_conversation(conversation_id)
+        return conversation
 
     @app.post(
         "/api/v1/conversations/{conversation_id}/resume",
@@ -518,11 +532,18 @@ def create_app() -> FastAPI:
         db: Session = Depends(get_db_session),
     ) -> ConversationRead:
         _catalog_bootstrap(db, settings)
-        return resume_conversation(
+        conversation = resume_conversation(
             db,
             conversation_id=conversation_id,
             settings=settings,
         )
+        get_runtime_manager().resume_conversation(conversation_id)
+        record = get_conversation_or_404(db, conversation_id)
+        get_runtime_manager().register_conversation(
+            record,
+            profile=conversation_profile(record),
+        )
+        return conversation
 
     @app.post(
         "/api/v1/conversations/{conversation_id}/end",
@@ -534,11 +555,13 @@ def create_app() -> FastAPI:
         db: Session = Depends(get_db_session),
     ) -> ConversationRead:
         _catalog_bootstrap(db, settings)
-        return end_conversation(
+        conversation = end_conversation(
             db,
             conversation_id=conversation_id,
             settings=settings,
         )
+        get_runtime_manager().unregister_conversation(conversation_id)
+        return conversation
 
     @app.post(
         "/api/v1/conversations/{conversation_id}/clone-profile",
@@ -613,6 +636,11 @@ def create_app() -> FastAPI:
             profile=conversation_profile(conversation),
             payload=MessagePayload(**payload.model_dump()),
         )
+        get_runtime_manager().ingest_message(
+            conversation,
+            profile=conversation_profile(conversation),
+            message=message,
+        )
         return MessageCommitResponse(
             message=MessageRead.model_validate(message),
             cp_revision=CpRevisionRead.model_validate(cp_revision),
@@ -635,6 +663,11 @@ def create_app() -> FastAPI:
             conversation,
             profile=conversation_profile(conversation),
             client_message_id=client_message_id,
+        )
+        get_runtime_manager().ingest_message(
+            conversation,
+            profile=conversation_profile(conversation),
+            message=message,
         )
         return MessageCommitResponse(
             message=MessageRead.model_validate(message),
@@ -730,6 +763,21 @@ def create_app() -> FastAPI:
                 await websocket.receive_text()
         except WebSocketDisconnect:
             SOCKET_MANAGER.disconnect(conversation_id, websocket)
+
+    @app.get(
+        "/internal/v1/conversations/{conversation_id}/runtime-snapshot",
+        tags=["internal"],
+    )
+    def get_internal_runtime_snapshot(
+        conversation_id: str,
+        db: Session = Depends(get_db_session),
+    ) -> dict[str, object]:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        return get_runtime_manager().runtime_snapshot(
+            conversation,
+            profile=conversation_profile(conversation),
+        )
 
     return app
 
