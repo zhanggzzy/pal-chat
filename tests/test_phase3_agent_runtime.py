@@ -144,9 +144,8 @@ def test_h03_direct_mention_obligates_single_agent(migrated_app: TestClient) -> 
     messages = agent_messages(migrated_app, conversation_id)
     assert len(messages) == 1
     assert messages[0]["sender_id"] == "agent-a"
-    snapshot = migrated_app.get(f"/internal/v1/conversations/{conversation_id}/runtime-snapshot")
-    assert snapshot.status_code == 200
-    workers = {item["agent_id"]: item for item in snapshot.json()["workers"]}
+    snapshot = manager.runtime_snapshot(record, profile=profile)
+    workers = {item["agent_id"]: item for item in snapshot["workers"]}
     assert workers["agent-a"]["active_run_id"] is None
     assert workers["agent-b"]["active_run_id"] is None
 
@@ -392,8 +391,8 @@ def test_worker_crash_recovery_and_fatal_error(migrated_app: TestClient) -> None
     recover_manager.pump(record, profile=profile)
     recover_messages = agent_messages(migrated_app, recover_id)
     assert [item["content_markdown"] for item in recover_messages] == ["恢复后继续"]
-    snapshot = migrated_app.get(f"/internal/v1/conversations/{recover_id}/runtime-snapshot")
-    workers = {item["agent_id"]: item for item in snapshot.json()["workers"]}
+    snapshot = recover_manager.runtime_snapshot(record, profile=profile)
+    workers = {item["agent_id"]: item for item in snapshot["workers"]}
     assert workers["agent-a"]["restart_count"] == 1
     assert workers["agent-a"]["worker_state"] == "LISTENING"
     assert migrated_app.post(f"/api/v1/conversations/{recover_id}/end").status_code == 200
@@ -417,7 +416,10 @@ def test_worker_crash_recovery_and_fatal_error(migrated_app: TestClient) -> None
     )
     fatal_record, fatal_profile = load_record_and_profile(fatal_id)
     fatal_manager.pump(fatal_record, profile=fatal_profile)
-    fatal_snapshot = migrated_app.get(f"/internal/v1/conversations/{fatal_id}/runtime-snapshot")
-    fatal_workers = {item["agent_id"]: item for item in fatal_snapshot.json()["workers"]}
+    fatal_snapshot = fatal_manager.runtime_snapshot(
+        fatal_record,
+        profile=fatal_profile,
+    )
+    fatal_workers = {item["agent_id"]: item for item in fatal_snapshot["workers"]}
     assert fatal_workers["agent-a"]["worker_state"] == "ERROR"
     assert agent_messages(migrated_app, fatal_id) == []

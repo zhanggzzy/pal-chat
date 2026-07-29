@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     bind_host: str = "127.0.0.1"
     keyring_service_name: str = "pal-chat"
     credential_backend: str = "keyring"
+    server_base_url: str | None = None
 
     @property
     def resolved_database_url(self) -> str:

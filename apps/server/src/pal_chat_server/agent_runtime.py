@@ -49,7 +49,7 @@ def _timing_wait_ms(profile: ExperimentProfile, *, direct_mention: bool, content
     return max(base_ms, len(content) * per_char_ms)
 
 
-def _runtime_enabled(profile: ExperimentProfile) -> bool:
+def is_agent_runtime_enabled(profile: ExperimentProfile) -> bool:
     return bool(profile.metadata.get("agent_runtime_enabled")) or int(
         profile.metadata.get("phase", 1)
     ) >= 3
@@ -115,7 +115,7 @@ class AgentRuntimeManager:
         *,
         profile: ExperimentProfile,
     ) -> None:
-        if not _runtime_enabled(profile):
+        if not is_agent_runtime_enabled(profile):
             return
         if conversation.profile_hash is None:
             raise AppError(
@@ -205,7 +205,7 @@ class AgentRuntimeManager:
         *,
         profile: ExperimentProfile,
     ) -> dict[str, Any]:
-        if not _runtime_enabled(profile):
+        if not is_agent_runtime_enabled(profile):
             return {
                 "conversation_id": conversation.id,
                 "profile_hash": conversation.profile_hash,
@@ -241,7 +241,7 @@ class AgentRuntimeManager:
         message: dict[str, Any],
         auto_pump: bool | None = None,
     ) -> None:
-        if not _runtime_enabled(profile):
+        if not is_agent_runtime_enabled(profile):
             return
         self.register_conversation(conversation, profile=profile)
         runtime = self._runtimes[conversation.id]
@@ -281,7 +281,7 @@ class AgentRuntimeManager:
         profile: ExperimentProfile,
         delta_ms: int,
     ) -> None:
-        if not _runtime_enabled(profile):
+        if not is_agent_runtime_enabled(profile):
             return
         if isinstance(self.clock, VirtualClock):
             self.clock.advance(timedelta(milliseconds=delta_ms))
@@ -295,7 +295,7 @@ class AgentRuntimeManager:
         agent_id: str,
         recoverable: bool,
     ) -> None:
-        if not _runtime_enabled(profile):
+        if not is_agent_runtime_enabled(profile):
             return
         self.register_conversation(conversation, profile=profile)
         runtime = self._runtimes[conversation.id]
@@ -351,7 +351,7 @@ class AgentRuntimeManager:
         profile: ExperimentProfile,
         max_iterations: int = 100,
     ) -> None:
-        if not _runtime_enabled(profile):
+        if not is_agent_runtime_enabled(profile):
             return
         self.register_conversation(conversation, profile=profile)
         runtime = self._runtimes[conversation.id]

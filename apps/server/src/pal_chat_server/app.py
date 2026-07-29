@@ -1,18 +1,13 @@
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, cast
 from uuid import uuid4
 
-from fastapi import (
-    Depends,
-    FastAPI,
-    Request,
-    Response,
-    WebSocket,
-    WebSocketDisconnect,
-    status,
-)
+from fastapi import Depends, FastAPI, Request, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -63,6 +58,8 @@ from pal_chat_server.sequence_runtime import (
     SOCKET_MANAGER,
     MessagePayload,
     commit_message,
+    connect_transcript,
+    dispatch_pending_outbox,
     get_cp_revision,
     list_cp_revisions,
     list_messages,
@@ -99,6 +96,7 @@ from pal_chat_server.services import (
     validate_credential,
     validate_profile,
 )
+from pal_chat_server.worker_supervisor import INTERNAL_SOCKET_MANAGER, WorkerSupervisor
 
 
 @asynccontextmanager
@@ -115,6 +113,7 @@ def _catalog_bootstrap(db: Session, settings: Settings) -> None:
 def create_app() -> FastAPI:
     settings = get_settings()
     runtime_manager = AgentRuntimeManager()
+    worker_supervisor = WorkerSupervisor(server_base_url=settings.server_base_url)
     app = FastAPI(
         title="pal-chat API",
         version=settings.app_version,
@@ -133,6 +132,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.state.runtime_manager = runtime_manager
+    app.state.worker_supervisor = worker_supervisor
 
     def conversation_profile(conversation: ConversationRecord) -> ExperimentProfile:
         locked = getattr(conversation, "locked_profile_json", None)
@@ -149,6 +149,34 @@ def create_app() -> FastAPI:
     def get_runtime_manager() -> AgentRuntimeManager:
         return app.state.runtime_manager  # type: ignore[no-any-return]
 
+    def get_worker_supervisor() -> WorkerSupervisor:
+        return app.state.worker_supervisor  # type: ignore[no-any-return]
+
+    def use_process_workers(profile: ExperimentProfile) -> bool:
+        return get_worker_supervisor().has_process_mode(profile)
+
+    def publish_runtime_event(conversation_id: str, event: dict[str, Any]) -> None:
+        get_worker_supervisor().publish_public_event(conversation_id, event)
+
+    def internal_auth_tuple(request: Request) -> tuple[str, str, str]:
+        authorization = request.headers.get("Authorization", "")
+        if not authorization.startswith("Bearer "):
+            raise AppError(
+                code="internal_auth_failed",
+                status_code=401,
+                message="Missing internal bearer token.",
+            )
+        token = authorization.removeprefix("Bearer ").strip()
+        agent_id = request.headers.get("X-Agent-ID", "")
+        profile_hash = request.headers.get("X-Profile-Hash", "")
+        if not token or not agent_id or not profile_hash:
+            raise AppError(
+                code="internal_auth_failed",
+                status_code=401,
+                message="Incomplete internal auth tuple.",
+            )
+        return token, agent_id, profile_hash
+
     def ensure_conversation_write_allowed(conversation_status: str) -> None:
         if conversation_status == ConversationStatus.RUNNING.value:
             return
@@ -163,6 +191,58 @@ def create_app() -> FastAPI:
             status_code=409,
             message="Conversation must be running before accepting messages.",
         )
+
+    def payload_list(payload: dict[str, object], key: str) -> list[object]:
+        value = payload.get(key, [])
+        if not isinstance(value, list):
+            raise AppError(
+                code="invalid_internal_payload",
+                status_code=422,
+                message=f"{key} must be a list.",
+            )
+        return value
+
+    def payload_optional_int(payload: dict[str, object], key: str) -> int | None:
+        value = payload.get(key)
+        if value is None:
+            return None
+        try:
+            return int(cast(int | str | float, value))
+        except (TypeError, ValueError) as exc:
+            raise AppError(
+                code="invalid_internal_payload",
+                status_code=422,
+                message=f"{key} must be an integer.",
+            ) from exc
+
+    def payload_required_int(payload: dict[str, object], key: str) -> int:
+        value = payload_optional_int(payload, key)
+        if value is None:
+            raise AppError(
+                code="invalid_internal_payload",
+                status_code=422,
+                message=f"{key} is required.",
+            )
+        return value
+
+    def typing_status(action: object) -> str:
+        return "active" if action == "start" else "idle"
+
+    def restart_count_for(
+        conversation: ConversationRecord,
+        *,
+        profile: ExperimentProfile,
+        agent_id: str,
+    ) -> int:
+        snapshot = get_worker_supervisor().runtime_snapshot(
+            conversation,
+            profile=profile,
+        )
+        workers = cast(list[dict[str, object]], snapshot["workers"])
+        for worker in workers:
+            if worker.get("agent_id") == agent_id:
+                return int(cast(int | str, worker.get("restart_count", 0)))
+        return 0
 
     @app.middleware("http")
     async def add_request_id(
@@ -498,10 +578,18 @@ def create_app() -> FastAPI:
             settings=settings,
         )
         record = get_conversation_or_404(db, conversation_id)
-        get_runtime_manager().register_conversation(
-            record,
-            profile=conversation_profile(record),
-        )
+        profile = conversation_profile(record)
+        if use_process_workers(profile):
+            get_worker_supervisor().start_workers(
+                record,
+                profile=profile,
+                guardrails=record.guardrails_json,
+            )
+        else:
+            get_runtime_manager().register_conversation(
+                record,
+                profile=profile,
+            )
         return conversation
 
     @app.post(
@@ -519,7 +607,12 @@ def create_app() -> FastAPI:
             conversation_id=conversation_id,
             settings=settings,
         )
-        get_runtime_manager().pause_conversation(conversation_id)
+        record = get_conversation_or_404(db, conversation_id)
+        profile = conversation_profile(record)
+        if use_process_workers(profile):
+            get_worker_supervisor().pause_workers(conversation_id)
+        else:
+            get_runtime_manager().pause_conversation(conversation_id)
         return conversation
 
     @app.post(
@@ -537,12 +630,16 @@ def create_app() -> FastAPI:
             conversation_id=conversation_id,
             settings=settings,
         )
-        get_runtime_manager().resume_conversation(conversation_id)
         record = get_conversation_or_404(db, conversation_id)
-        get_runtime_manager().register_conversation(
-            record,
-            profile=conversation_profile(record),
-        )
+        profile = conversation_profile(record)
+        if use_process_workers(profile):
+            get_worker_supervisor().resume_workers(conversation_id)
+        else:
+            get_runtime_manager().resume_conversation(conversation_id)
+            get_runtime_manager().register_conversation(
+                record,
+                profile=profile,
+            )
         return conversation
 
     @app.post(
@@ -560,7 +657,12 @@ def create_app() -> FastAPI:
             conversation_id=conversation_id,
             settings=settings,
         )
-        get_runtime_manager().unregister_conversation(conversation_id)
+        record = get_conversation_or_404(db, conversation_id)
+        profile = conversation_profile(record)
+        if use_process_workers(profile):
+            get_worker_supervisor().stop_workers(conversation_id)
+        else:
+            get_runtime_manager().unregister_conversation(conversation_id)
         return conversation
 
     @app.post(
@@ -636,11 +738,25 @@ def create_app() -> FastAPI:
             profile=conversation_profile(conversation),
             payload=MessagePayload(**payload.model_dump()),
         )
-        get_runtime_manager().ingest_message(
-            conversation,
-            profile=conversation_profile(conversation),
-            message=message,
-        )
+        profile = conversation_profile(conversation)
+        if use_process_workers(profile):
+            publish_runtime_event(
+                conversation.id,
+                {
+                    "protocol_version": 1,
+                    "event_id": str(message["message_id"]),
+                    "event_type": "message.committed",
+                    "conversation_id": conversation.id,
+                    "conversation_seq": message["conversation_seq"],
+                    "payload": {"message": message},
+                },
+            )
+        else:
+            get_runtime_manager().ingest_message(
+                conversation,
+                profile=profile,
+                message=message,
+            )
         return MessageCommitResponse(
             message=MessageRead.model_validate(message),
             cp_revision=CpRevisionRead.model_validate(cp_revision),
@@ -664,11 +780,25 @@ def create_app() -> FastAPI:
             profile=conversation_profile(conversation),
             client_message_id=client_message_id,
         )
-        get_runtime_manager().ingest_message(
-            conversation,
-            profile=conversation_profile(conversation),
-            message=message,
-        )
+        profile = conversation_profile(conversation)
+        if use_process_workers(profile):
+            publish_runtime_event(
+                conversation.id,
+                {
+                    "protocol_version": 1,
+                    "event_id": str(message["message_id"]),
+                    "event_type": "message.committed",
+                    "conversation_id": conversation.id,
+                    "conversation_seq": message["conversation_seq"],
+                    "payload": {"message": message},
+                },
+            )
+        else:
+            get_runtime_manager().ingest_message(
+                conversation,
+                profile=profile,
+                message=message,
+            )
         return MessageCommitResponse(
             message=MessageRead.model_validate(message),
             cp_revision=CpRevisionRead.model_validate(cp_revision),
@@ -765,19 +895,314 @@ def create_app() -> FastAPI:
             SOCKET_MANAGER.disconnect(conversation_id, websocket)
 
     @app.get(
+        "/internal/v1/conversations/{conversation_id}/messages",
+        tags=["internal"],
+    )
+    def get_internal_messages(
+        conversation_id: str,
+        request: Request,
+        after_seq: int = 0,
+        db: Session = Depends(get_db_session),
+    ) -> dict[str, object]:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        token, agent_id, profile_hash = internal_auth_tuple(request)
+        get_worker_supervisor().verify(
+            conversation_id=conversation_id,
+            token=token,
+            agent_id=agent_id,
+            profile_hash=profile_hash,
+        )
+        return {"items": list_messages(conversation, after_seq=max(after_seq, 0), limit=500)}
+
+    @app.get(
         "/internal/v1/conversations/{conversation_id}/runtime-snapshot",
         tags=["internal"],
     )
     def get_internal_runtime_snapshot(
         conversation_id: str,
+        request: Request,
         db: Session = Depends(get_db_session),
     ) -> dict[str, object]:
         _catalog_bootstrap(db, settings)
         conversation = get_conversation_or_404(db, conversation_id)
-        return get_runtime_manager().runtime_snapshot(
-            conversation,
-            profile=conversation_profile(conversation),
+        profile = conversation_profile(conversation)
+        token, agent_id, profile_hash = internal_auth_tuple(request)
+        get_worker_supervisor().verify(
+            conversation_id=conversation_id,
+            token=token,
+            agent_id=agent_id,
+            profile_hash=profile_hash,
         )
+        snapshot = get_worker_supervisor().runtime_snapshot(
+            conversation,
+            profile=profile,
+        )
+        snapshot.update(
+            {
+                "agent_id": agent_id,
+                "all_agent_ids": [profile.agent_a.agent_id, profile.agent_b.agent_id],
+                "latest_conversation_seq": session_snapshot(conversation)["payload"][
+                    "latest_conversation_seq"
+                ],
+                "profile": profile.model_dump(mode="json"),
+                "worker_restart_limit": conversation.guardrails_json["worker_restart_limit"],
+                "state_dir": str(Path(conversation.archive_dir or ".") / "module-state" / agent_id),
+            }
+        )
+        return snapshot
+
+    @app.post(
+        "/internal/v1/conversations/{conversation_id}/agent-actions",
+        tags=["internal"],
+    )
+    def post_internal_agent_action(
+        conversation_id: str,
+        payload: dict[str, object],
+        request: Request,
+        db: Session = Depends(get_db_session),
+    ) -> dict[str, object]:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        ensure_conversation_write_allowed(conversation.status)
+        profile = conversation_profile(conversation)
+        token, agent_id, profile_hash = internal_auth_tuple(request)
+        get_worker_supervisor().verify(
+            conversation_id=conversation_id,
+            token=token,
+            agent_id=agent_id,
+            profile_hash=profile_hash,
+        )
+        message, cp_revision, _ = commit_message(
+            conversation,
+            profile=profile,
+            payload=MessagePayload(
+                client_message_id=str(payload["run_id"]),
+                content_markdown=str(payload["content_markdown"]),
+                mentions=[str(item) for item in payload_list(payload, "mentions")],
+                primary_reply_to=(
+                    str(payload["primary_reply_to"])
+                    if payload.get("primary_reply_to") is not None
+                    else None
+                ),
+                responds_to=[str(item) for item in payload_list(payload, "responds_to")],
+                sender_kind="agent",
+                sender_id=agent_id,
+                expected_conversation_seq=payload_required_int(
+                    payload,
+                    "expected_conversation_seq",
+                ),
+                idempotency_key=str(payload["idempotency_key"]),
+                causal_episode_id=(
+                    str(payload["causal_episode_id"])
+                    if payload.get("causal_episode_id") is not None
+                    else None
+                ),
+                caused_by_message_id=(
+                    str(payload["caused_by_message_id"])
+                    if payload.get("caused_by_message_id") is not None
+                    else None
+                ),
+                agent_hop=payload_optional_int(payload, "agent_hop") or 0,
+            ),
+        )
+        publish_runtime_event(
+            conversation.id,
+            {
+                "protocol_version": 1,
+                "event_id": str(message["message_id"]),
+                "event_type": "message.committed",
+                "conversation_id": conversation.id,
+                "conversation_seq": message["conversation_seq"],
+                "payload": {"message": message},
+            },
+        )
+        return {"message": message, "cp_revision": cp_revision}
+
+    @app.post(
+        "/internal/v1/conversations/{conversation_id}/agent-runs/{run_id}/status",
+        tags=["internal"],
+    )
+    def post_internal_agent_run_status(
+        conversation_id: str,
+        run_id: str,
+        payload: dict[str, object],
+        request: Request,
+        db: Session = Depends(get_db_session),
+    ) -> dict[str, str]:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        token, agent_id, profile_hash = internal_auth_tuple(request)
+        get_worker_supervisor().verify(
+            conversation_id=conversation_id,
+            token=token,
+            agent_id=agent_id,
+            profile_hash=profile_hash,
+        )
+        with connect_transcript(conversation) as connection:
+            profile = conversation_profile(conversation)
+            active_run_id = payload.get("active_run_id")
+            connection.execute(
+                """
+                INSERT INTO agent_runtime_state(
+                  agent_id, worker_state, reliable_seq, dirty_since_seq,
+                  pending_message_ids_json, pending_root_message_ids_json, active_run_id,
+                  typing_status, restart_count, profile_hash, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(agent_id) DO UPDATE SET
+                  worker_state = excluded.worker_state,
+                  reliable_seq = excluded.reliable_seq,
+                  dirty_since_seq = excluded.dirty_since_seq,
+                  active_run_id = excluded.active_run_id,
+                  profile_hash = excluded.profile_hash,
+                  updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    agent_id,
+                    str(payload.get("worker_state", "LISTENING")),
+                    payload_required_int(payload, "reliable_seq"),
+                    payload_optional_int(payload, "dirty_since_seq"),
+                    json.dumps([]),
+                    json.dumps([]),
+                    None if active_run_id in (None, "-") else str(active_run_id),
+                    typing_status(payload.get("typing_action")),
+                    restart_count_for(
+                        conversation,
+                        profile=profile,
+                        agent_id=agent_id,
+                    ),
+                    conversation.profile_hash,
+                ),
+            )
+            if run_id != "-":
+                connection.execute(
+                    """
+                    INSERT INTO agent_runs(
+                      run_id, agent_id, status, phase, observation_message_ids_json,
+                      root_message_ids_json, expected_conversation_seq, profile_hash,
+                      idempotency_key, causal_episode_id, caused_by_message_id, agent_hop,
+                      decision_json, draft_message_json, earliest_send_at, invalidated_by_seq,
+                      error_code, error_message, started_at, updated_at, finished_at
+                    ) VALUES (
+                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                      CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL
+                    )
+                    ON CONFLICT(run_id) DO UPDATE SET
+                      status = excluded.status,
+                      phase = excluded.phase,
+                      updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (
+                        run_id,
+                        agent_id,
+                        str(payload.get("run_status", "RUNNING")),
+                        str(payload.get("worker_state", "LISTENING")),
+                        json.dumps([]),
+                        json.dumps([]),
+                        payload_required_int(payload, "reliable_seq"),
+                        conversation.profile_hash,
+                        run_id,
+                        None,
+                        None,
+                        0,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    ),
+                )
+            connection.commit()
+        return {"ok": "true"}
+
+    @app.post(
+        "/internal/v1/conversations/{conversation_id}/agent-runs/{run_id}/typing",
+        tags=["internal"],
+    )
+    def post_internal_agent_typing(
+        conversation_id: str,
+        run_id: str,
+        payload: dict[str, object],
+        request: Request,
+        db: Session = Depends(get_db_session),
+    ) -> dict[str, str]:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        token, agent_id, profile_hash = internal_auth_tuple(request)
+        get_worker_supervisor().verify(
+            conversation_id=conversation_id,
+            token=token,
+            agent_id=agent_id,
+            profile_hash=profile_hash,
+        )
+        event_type = (
+            "agent.typing_started"
+            if payload.get("action") == "start"
+            else "agent.typing_stopped"
+        )
+        with connect_transcript(conversation) as connection:
+            connection.execute(
+                """
+                INSERT INTO outbox_events(
+                  event_id, event_type, conversation_seq, payload_json, status,
+                  dispatch_attempts, dispatched_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    str(uuid4()),
+                    event_type,
+                    None,
+                    json.dumps(
+                        {
+                            "agent_id": agent_id,
+                            "run_id": None if run_id == "-" else run_id,
+                            "reason": payload.get("reason"),
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    "pending",
+                    0,
+                    None,
+                ),
+            )
+            connection.commit()
+        dispatch_pending_outbox(conversation)
+        return {"ok": "true"}
+
+    @app.websocket("/internal/v1/conversations/{conversation_id}/agent-stream")
+    async def internal_agent_stream(
+        websocket: WebSocket,
+        conversation_id: str,
+        after_seq: int = 0,
+    ) -> None:
+        token_header = websocket.headers.get("authorization", "")
+        token = (
+            token_header.removeprefix("Bearer ").strip()
+            if token_header.startswith("Bearer ")
+            else ""
+        )
+        agent_id = websocket.headers.get("x-agent-id", "")
+        profile_hash = websocket.headers.get("x-profile-hash", "")
+        with get_session_factory()() as db:
+            _catalog_bootstrap(db, settings)
+            conversation = get_conversation_or_404(db, conversation_id)
+        get_worker_supervisor().mark_connected(
+            conversation_id=conversation_id,
+            token=token,
+            agent_id=agent_id,
+            profile_hash=profile_hash,
+        )
+        await INTERNAL_SOCKET_MANAGER.connect(conversation_id, agent_id, websocket)
+        try:
+            await websocket.send_json(session_snapshot(conversation))
+            for event in replay_events(conversation, after_seq=max(after_seq, 0)):
+                await websocket.send_json(event)
+            while True:
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            INTERNAL_SOCKET_MANAGER.disconnect(conversation_id, agent_id)
 
     return app
 
