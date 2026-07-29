@@ -12,12 +12,14 @@ import threading
 import time
 from dataclasses import dataclass, field
 from hashlib import sha1
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
 import httpx
 
 from pal_chat_server.contracts import ModelRequest
+from pal_chat_server.private_runtime import PrivateRuntimeStore
 from pal_chat_server.scripted_adapter import ScriptedModelAdapter, ScriptedStep
 
 
@@ -38,7 +40,6 @@ class WorkerState:
     dirty_since_seq: int | None = None
     pending_messages: list[dict[str, Any]] = field(default_factory=list)
     pending_roots: list[str] = field(default_factory=list)
-    current_draft: dict[str, Any] | None = None
     current_all_mention: bool = False
     current_direct_mention: bool = False
     caused_by_message_id: str | None = None
@@ -127,9 +128,7 @@ class RawWebSocketClient:
         if opcode != 1:
             return {}
         decoded = json.loads(payload.decode("utf-8"))
-        if not isinstance(decoded, dict):
-            return {}
-        return decoded
+        return decoded if isinstance(decoded, dict) else {}
 
     def close(self) -> None:
         if self.sock is not None and not self._closed:
@@ -143,10 +142,7 @@ def select_script(payload: dict[str, Any]) -> list[ScriptedStep]:
     profile = payload["profile"]
     modules = profile["modules"]
     adapter_config = modules["model_adapter"]["config"]
-    return [
-        ScriptedStep.model_validate(item)
-        for item in adapter_config.get("script", [])
-    ]
+    return [ScriptedStep.model_validate(item) for item in adapter_config.get("script", [])]
 
 
 def timing_wait_ms(payload: dict[str, Any], *, direct_mention: bool, content: str) -> int:
@@ -176,6 +172,45 @@ def action_request(agent_id: str, decision_payload: dict[str, Any]) -> ModelRequ
         ],
         metadata={"agent_id": agent_id},
     )
+
+
+def fetch_runtime_snapshot(client: httpx.Client, config: WorkerConfig) -> dict[str, Any]:
+    response = client.get(
+        f"{config.server_base_url}/internal/v1/conversations/{config.conversation_id}/runtime-snapshot",
+        headers=auth_headers(config),
+    )
+    response.raise_for_status()
+    payload = response.json()
+    return payload if isinstance(payload, dict) else {}
+
+
+def fetch_recent_messages(
+    client: httpx.Client,
+    config: WorkerConfig,
+    *,
+    after_seq: int,
+) -> list[dict[str, Any]]:
+    response = client.get(
+        f"{config.server_base_url}/internal/v1/conversations/{config.conversation_id}/messages",
+        headers=auth_headers(config),
+        params={"after_seq": max(0, after_seq)},
+    )
+    response.raise_for_status()
+    payload = response.json()
+    items = payload.get("items", [])
+    return items if isinstance(items, list) else []
+
+
+def normalize_memory_operations(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    memory_delta = payload.get("memory_delta")
+    if not isinstance(memory_delta, dict):
+        return []
+    operations = memory_delta.get("operations", [])
+    if not isinstance(operations, list):
+        return []
+    return [item for item in operations if isinstance(item, dict)]
 
 
 def should_queue(
@@ -223,15 +258,31 @@ def run_worker() -> None:
     signal.signal(signal.SIGTERM, stop_handler)
     signal.signal(signal.SIGINT, stop_handler)
 
-    snapshot = client.get(
-        f"{config.server_base_url}/internal/v1/conversations/{config.conversation_id}/runtime-snapshot",
-        headers=auth_headers(config),
-    )
-    snapshot.raise_for_status()
-    runtime_payload = snapshot.json()
+    runtime_payload = fetch_runtime_snapshot(client, config)
     script = select_script(runtime_payload)
     adapter = ScriptedModelAdapter(script)
-    state = WorkerState(reliable_seq=int(runtime_payload["latest_conversation_seq"]))
+    state = WorkerState(
+        reliable_seq=int(
+            runtime_payload.get("reliable_seq", runtime_payload["latest_conversation_seq"])
+        )
+    )
+    profile = runtime_payload["profile"]
+    modules = profile["modules"]
+    agent_profile = (
+        profile["agent_a"]
+        if profile["agent_a"]["agent_id"] == config.agent_id
+        else profile["agent_b"]
+    )
+    runtime_store = PrivateRuntimeStore(
+        state_dir=Path(str(runtime_payload["state_dir"])),
+        agent_id=config.agent_id,
+        attention_prior=str(agent_profile["attention_prior"]),
+        prompt_version=str(profile.get("prompt_version", "phase1")),
+        memory_module_id=str(modules["memory"]["module_id"]),
+        memory_config=dict(modules["memory"].get("config", {})),
+        context_module_id=str(modules["context_assembly"]["module_id"]),
+        context_config=dict(modules["context_assembly"].get("config", {})),
+    )
     incoming: queue.Queue[dict[str, Any]] = queue.Queue()
 
     ws_url = config.server_base_url.replace("http://", "ws://").replace("https://", "wss://")
@@ -255,24 +306,33 @@ def run_worker() -> None:
     listener = threading.Thread(target=listen, daemon=True)
     listener.start()
 
-    def post_status(status: str, phase: str, run_id: str | None = None) -> None:
+    def post_status(
+        status: str,
+        phase: str,
+        run_id: str | None = None,
+        *,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
         run_segment = run_id or "-"
+        payload = {
+            "worker_state": phase,
+            "reliable_seq": state.reliable_seq,
+            "dirty_since_seq": state.dirty_since_seq,
+            "active_run_id": run_id,
+            "run_status": status,
+            "typing_action": "start" if state.typing_active else "stop",
+            "causal_episode_id": state.causal_episode_id,
+            "caused_by_message_id": state.caused_by_message_id,
+            "agent_hop": state.agent_hop,
+            "checkpoint_ack": "paused" if state.pause_requested else None,
+        }
+        if extra:
+            payload.update(extra)
         client.post(
             f"{config.server_base_url}/internal/v1/conversations/"
             f"{config.conversation_id}/agent-runs/{run_segment}/status",
             headers=auth_headers(config),
-            json={
-                "worker_state": phase,
-                "reliable_seq": state.reliable_seq,
-                "dirty_since_seq": state.dirty_since_seq,
-                "active_run_id": run_id,
-                "run_status": status,
-                "typing_action": "start" if state.typing_active else "stop",
-                "causal_episode_id": state.causal_episode_id,
-                "caused_by_message_id": state.caused_by_message_id,
-                "agent_hop": state.agent_hop,
-                "checkpoint_ack": "paused" if state.pause_requested else None,
-            },
+            json=payload,
         ).raise_for_status()
 
     def post_worker_state(phase: str) -> None:
@@ -295,6 +355,35 @@ def run_worker() -> None:
             os._exit(90)
         if step.fail_code == "WORKER_CRASHED_FATAL":
             os._exit(91)
+
+    def build_context_trace(
+        *,
+        bundle: dict[str, Any],
+        memory_revision_before: str,
+        staged_memory_revision: str | None,
+        memory_revision_after: str | None = None,
+        should_reply: bool | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        trace = {
+            "bundle_id": bundle["bundle_id"],
+            "bundle_revision": bundle["revision"],
+            "phase": bundle["phase"],
+            "conversation_seq": bundle["conversation_seq"],
+            "projection_revision": bundle["projection_revision"],
+            "memory_revision_before": memory_revision_before,
+            "staged_memory_revision": staged_memory_revision,
+            "selected_public_refs": bundle["selected_public_refs"],
+            "selected_private_refs": bundle["selected_private_refs"],
+            "estimated_tokens": bundle["estimated_tokens"],
+        }
+        if memory_revision_after is not None:
+            trace["memory_revision_after"] = memory_revision_after
+        if should_reply is not None:
+            trace["should_reply"] = should_reply
+        if payload is not None:
+            trace["payload"] = payload
+        return trace
 
     def process_runtime_event(event: dict[str, Any]) -> None:
         event_type = event.get("event_type")
@@ -385,9 +474,7 @@ def run_worker() -> None:
                 current_batch = [root_message]
                 state.pending_roots = [str(root_message["message_id"])]
         current_ids = {str(msg["message_id"]) for msg in current_batch}
-        state.pending_roots = [
-            item for item in state.pending_roots if item in current_ids
-        ]
+        state.pending_roots = [item for item in state.pending_roots if item in current_ids]
         latest = current_batch[-1]
         mentions = set(latest["mentions"])
         all_mention = mentions.issuperset(runtime_payload["all_agent_ids"])
@@ -406,37 +493,94 @@ def run_worker() -> None:
             state.causal_episode_id = f"episode-{root_digest[:16]}"
             state.agent_hop = 0
             if state.caused_by_message_id is not None:
-                state.episode_root_message_ids[state.causal_episode_id] = (
-                    state.caused_by_message_id
-                )
+                state.episode_root_message_ids[state.causal_episode_id] = state.caused_by_message_id
         else:
             state.causal_episode_id = latest.get("causal_episode_id")
             state.agent_hop = int(latest.get("agent_hop") or 0) + 1
-        post_status("RUNNING", "DECIDING", state.active_run_id)
+
+        runtime_payload = fetch_runtime_snapshot(client, config)
+        current_memory = runtime_store.snapshot()
+        recent_messages = fetch_recent_messages(
+            client,
+            config,
+            after_seq=max(0, latest_seq - 30),
+        )
+        decision_bundle = runtime_store.build_context_bundle(
+            phase="decision",
+            as_of_time=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            conversation_seq=latest_seq,
+            projection_revision=int(runtime_payload["latest_cp_revision"]),
+            cp_snapshot=dict(runtime_payload["cp_snapshot"]),
+            memory_snapshot=current_memory,
+            public_messages=recent_messages,
+            observation_message_ids=[str(item["message_id"]) for item in current_batch],
+        )
+        post_status(
+            "RUNNING",
+            "DECIDING",
+            state.active_run_id,
+            extra={
+                "decision_json": build_context_trace(
+                    bundle=decision_bundle,
+                    memory_revision_before=current_memory["revision"],
+                    staged_memory_revision=None,
+                )
+            },
+        )
         if direct_mention:
             set_typing(True, state.active_run_id, "decision")
-        decision_step = adapter.select_step(
-            decision_request(config.agent_id, latest),
-        )
+        decision_step = adapter.select_step(decision_request(config.agent_id, latest))
         handle_selected_step(decision_step)
         if decision_step.delay_ms > 0:
             advance_with_pump(decision_step.delay_ms)
         if stop_event.is_set() or state.paused or state.active_run_id is None:
             continue
+
         decision_payload = decision_step.output_json or {}
+        decision_operations = normalize_memory_operations(decision_payload)
+        decision_stage = runtime_store.stage_preview(
+            operations=decision_operations,
+            run_id=state.active_run_id,
+            phase="decision",
+            as_of_time=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        )
         should_reply = bool(decision_payload.get("should_reply", direct_mention or all_mention))
         if direct_mention or all_mention:
             should_reply = True
+        decision_trace = build_context_trace(
+            bundle=decision_bundle,
+            memory_revision_before=current_memory["revision"],
+            staged_memory_revision=(
+                None if decision_stage is None else str(decision_stage["revision"])
+            ),
+            should_reply=should_reply,
+            payload=decision_payload,
+        )
         if not should_reply:
-            post_status("SILENT", "DECIDING", state.active_run_id)
+            post_status(
+                "SILENT",
+                "DECIDING",
+                state.active_run_id,
+                extra={"decision_json": decision_trace},
+            )
             set_typing(False, state.active_run_id, "silent")
             state.active_run_id = None
             state.dirty_since_seq = None
             post_worker_state("LISTENING")
             continue
-        action_step = adapter.select_step(
-            action_request(config.agent_id, decision_payload),
+
+        action_bundle = runtime_store.build_context_bundle(
+            phase="action",
+            as_of_time=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            conversation_seq=latest_seq,
+            projection_revision=int(runtime_payload["latest_cp_revision"]),
+            cp_snapshot=dict(runtime_payload["cp_snapshot"]),
+            memory_snapshot=current_memory,
+            public_messages=recent_messages,
+            observation_message_ids=[str(item["message_id"]) for item in current_batch],
+            decision_payload=decision_payload,
         )
+        action_step = adapter.select_step(action_request(config.agent_id, decision_payload))
         handle_selected_step(action_step)
         if not direct_mention:
             set_typing(True, state.active_run_id, "action")
@@ -450,6 +594,24 @@ def run_worker() -> None:
             "primary_reply_to": state.caused_by_message_id,
             "responds_to": [state.caused_by_message_id] if state.caused_by_message_id else [],
         }
+        combined_operations = decision_operations + normalize_memory_operations(draft)
+        staged_combined = runtime_store.stage_preview(
+            operations=combined_operations,
+            run_id=state.active_run_id,
+            phase="action",
+            as_of_time=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        )
+        action_trace = build_context_trace(
+            bundle=action_bundle,
+            memory_revision_before=current_memory["revision"],
+            staged_memory_revision=(
+                None if staged_combined is None else str(staged_combined["revision"])
+            ),
+            payload={
+                key: value for key, value in draft.items() if key != "memory_delta"
+            },
+        )
+
         wait_ms = timing_wait_ms(
             runtime_payload,
             direct_mention=direct_mention,
@@ -462,17 +624,25 @@ def run_worker() -> None:
             or state.paused
             or state.active_run_id is None
             or (
-            state.dirty_since_seq is not None
-            and state.dirty_since_seq > (state.expected_conversation_seq or 0)
-            and not all_mention
+                state.dirty_since_seq is not None
+                and state.dirty_since_seq > (state.expected_conversation_seq or 0)
+                and not all_mention
             )
         ):
-            post_status("INVALIDATED", "RECONSIDER_BEFORE_SEND", state.active_run_id)
+            post_status(
+                "INVALIDATED",
+                "RECONSIDER_BEFORE_SEND",
+                state.active_run_id,
+                extra={
+                    "decision_json": decision_trace,
+                    "draft_message_json": action_trace,
+                },
+            )
             set_typing(False, state.active_run_id, "invalidated")
             state.active_run_id = None
-            state.current_draft = None
             post_worker_state("LISTENING")
             continue
+
         while True:
             response = client.post(
                 f"{config.server_base_url}/internal/v1/conversations/{config.conversation_id}/agent-actions",
@@ -494,31 +664,67 @@ def run_worker() -> None:
                 error = response.json()["error"]
                 if error["code"] == "stale_sequence" and all_mention:
                     details = error["details"]
-                    state.expected_conversation_seq = int(
-                        details["actual_conversation_seq"]
-                    )
+                    state.expected_conversation_seq = int(details["actual_conversation_seq"])
                     continue
                 if error["code"] == "stale_sequence":
-                    post_status("INVALIDATED", "RECONSIDER_BEFORE_SEND", state.active_run_id)
+                    post_status(
+                        "INVALIDATED",
+                        "RECONSIDER_BEFORE_SEND",
+                        state.active_run_id,
+                        extra={
+                            "decision_json": decision_trace,
+                            "draft_message_json": action_trace,
+                        },
+                    )
                     set_typing(False, state.active_run_id, "stale-sequence")
                     state.active_run_id = None
-                    state.current_draft = None
                     post_worker_state("LISTENING")
                     break
                 if error["code"] == "budget_exhausted":
-                    post_status("BUDGET_EXHAUSTED", "SUBMITTING", state.active_run_id)
+                    post_status(
+                        "BUDGET_EXHAUSTED",
+                        "SUBMITTING",
+                        state.active_run_id,
+                        extra={
+                            "decision_json": decision_trace,
+                            "draft_message_json": action_trace,
+                        },
+                    )
                     set_typing(False, state.active_run_id, "budget-exhausted")
                     state.active_run_id = None
                     post_worker_state("LISTENING")
                     break
             response.raise_for_status()
             break
+
         if state.active_run_id is None:
             state.expected_conversation_seq = None
             state.dirty_since_seq = None
             state.pending_roots.clear()
             continue
-        post_status("COMMITTED", "SUBMITTING", state.active_run_id)
+
+        response_payload = response.json()
+        committed_message = response_payload["message"]
+        cp_revision = response_payload["cp_revision"]
+        memory_after = runtime_store.commit_operations(
+            operations=combined_operations,
+            run_id=state.active_run_id,
+            conversation_seq=int(committed_message["conversation_seq"]),
+            cp_revision=int(cp_revision["projection_revision"]),
+            bundle_revisions=[decision_bundle["revision"], action_bundle["revision"]],
+            as_of_time=str(committed_message["committed_at"]),
+        )
+        decision_trace["memory_revision_after"] = memory_after["revision"]
+        action_trace["memory_revision_after"] = memory_after["revision"]
+        post_status(
+            "COMMITTED",
+            "SUBMITTING",
+            state.active_run_id,
+            extra={
+                "decision_json": decision_trace,
+                "draft_message_json": action_trace,
+            },
+        )
         set_typing(False, state.active_run_id, "submitted")
         state.active_run_id = None
         state.expected_conversation_seq = None

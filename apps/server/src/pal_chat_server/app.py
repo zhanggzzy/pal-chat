@@ -60,6 +60,7 @@ from pal_chat_server.sequence_runtime import (
     commit_message,
     connect_transcript,
     dispatch_pending_outbox,
+    fetch_latest_cp_snapshot,
     get_cp_revision,
     list_cp_revisions,
     list_messages,
@@ -930,13 +931,28 @@ def create_app() -> FastAPI:
             conversation,
             profile=profile,
         )
+        snapshot_payload = session_snapshot(conversation)["payload"]
+        reliable_seq = int(snapshot_payload["latest_conversation_seq"])
+        with connect_transcript(conversation) as connection:
+            runtime_row = connection.execute(
+                """
+                SELECT reliable_seq
+                FROM agent_runtime_state
+                WHERE agent_id = ?
+                """,
+                (agent_id,),
+            ).fetchone()
+            if runtime_row is not None:
+                reliable_seq = int(runtime_row["reliable_seq"])
+            latest_cp_revision, cp_snapshot = fetch_latest_cp_snapshot(connection)
         snapshot.update(
             {
                 "agent_id": agent_id,
                 "all_agent_ids": [profile.agent_a.agent_id, profile.agent_b.agent_id],
-                "latest_conversation_seq": session_snapshot(conversation)["payload"][
-                    "latest_conversation_seq"
-                ],
+                "latest_conversation_seq": snapshot_payload["latest_conversation_seq"],
+                "reliable_seq": reliable_seq,
+                "latest_cp_revision": latest_cp_revision,
+                "cp_snapshot": cp_snapshot,
                 "profile": profile.model_dump(mode="json"),
                 "worker_restart_limit": conversation.guardrails_json["worker_restart_limit"],
                 "state_dir": str(Path(conversation.archive_dir or ".") / "module-state" / agent_id),
@@ -1059,6 +1075,8 @@ def create_app() -> FastAPI:
                 if run_status in terminal_statuses
                 else typing_status(payload.get("typing_action"))
             )
+            decision_json = payload.get("decision_json")
+            draft_message_json = payload.get("draft_message_json")
             connection.execute(
                 """
                 INSERT INTO agent_runtime_state(
@@ -1121,6 +1139,8 @@ def create_app() -> FastAPI:
                       causal_episode_id = excluded.causal_episode_id,
                       caused_by_message_id = excluded.caused_by_message_id,
                       agent_hop = excluded.agent_hop,
+                      decision_json = excluded.decision_json,
+                      draft_message_json = excluded.draft_message_json,
                       finished_at = CASE
                         WHEN excluded.status IN (
                           'BUDGET_EXHAUSTED', 'COMMITTED', 'INVALIDATED',
@@ -1144,8 +1164,16 @@ def create_app() -> FastAPI:
                         payload.get("causal_episode_id"),
                         payload.get("caused_by_message_id"),
                         payload_optional_int(payload, "agent_hop") or 0,
-                        None,
-                        None,
+                        (
+                            json.dumps(decision_json, ensure_ascii=False, sort_keys=True)
+                            if decision_json is not None
+                            else None
+                        ),
+                        (
+                            json.dumps(draft_message_json, ensure_ascii=False, sort_keys=True)
+                            if draft_message_json is not None
+                            else None
+                        ),
                         None,
                         None,
                         None,
