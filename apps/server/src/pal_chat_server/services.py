@@ -58,6 +58,11 @@ TRANSITION_RULES = [
 ]
 
 
+ALLOWED_TRANSITIONS_BY_ACTION: dict[str, set[tuple[str, str]]] = {}
+for from_status, to_status, via in TRANSITION_RULES:
+    ALLOWED_TRANSITIONS_BY_ACTION.setdefault(via, set()).add((from_status, to_status))
+
+
 def utc_now(clock: Clock | None = None) -> datetime:
     return (clock or RealClock()).now_utc()
 
@@ -125,6 +130,7 @@ def validate_profile(
     issues: list[ValidationIssue] = []
     registry = registry_by_id()
     capabilities: set[str] = set()
+    selected_module_ids = {selection.module_id for selection in profile.modules.values()}
 
     for kind, selection in profile.modules.items():
         descriptor = registry.get(selection.module_id)
@@ -162,7 +168,7 @@ def validate_profile(
                 )
             )
         for conflict in descriptor.conflicts_with:
-            if conflict in profile.modules:
+            if conflict in selected_module_ids:
                 issues.append(
                     ValidationIssue(
                         code="conflicting_module",
@@ -573,6 +579,27 @@ def ensure_no_other_active_conversation(session: Session, current_id: str) -> No
             )
 
 
+def ensure_transition_allowed(
+    *,
+    action: str,
+    current_status: str,
+    next_status: str,
+) -> None:
+    allowed = ALLOWED_TRANSITIONS_BY_ACTION.get(action, set())
+    if (current_status, next_status) in allowed:
+        return
+    raise AppError(
+        code="invalid_transition",
+        status_code=409,
+        message=f"Conversation cannot {action} from {current_status} to {next_status}.",
+        details={
+            "action": action,
+            "from_status": current_status,
+            "to_status": next_status,
+        },
+    )
+
+
 def _credential_refs_payload(session: Session, profile: ExperimentProfile) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for ref in model_credential_refs(profile):
@@ -650,6 +677,11 @@ def start_conversation(
     clock: Clock | None = None,
 ) -> ConversationRead:
     conversation = get_conversation_or_404(session, conversation_id)
+    ensure_transition_allowed(
+        action="start",
+        current_status=conversation.status,
+        next_status=ConversationStatus.RUNNING.value,
+    )
     ensure_no_other_active_conversation(session, conversation.id)
     result = validate_conversation(
         session,
@@ -712,12 +744,11 @@ def pause_conversation(
     clock: Clock | None = None,
 ) -> ConversationRead:
     conversation = get_conversation_or_404(session, conversation_id)
-    if conversation.status != ConversationStatus.RUNNING.value:
-        raise AppError(
-            code="invalid_transition",
-            status_code=409,
-            message="Conversation is not running.",
-        )
+    ensure_transition_allowed(
+        action="pause",
+        current_status=conversation.status,
+        next_status=ConversationStatus.PAUSED.value,
+    )
     conversation.status = ConversationStatus.PAUSED.value
     conversation.updated_at = utc_now(clock)
     if conversation.archive_dir:
@@ -734,12 +765,11 @@ def resume_conversation(
     clock: Clock | None = None,
 ) -> ConversationRead:
     conversation = get_conversation_or_404(session, conversation_id)
-    if conversation.status != ConversationStatus.PAUSED.value:
-        raise AppError(
-            code="invalid_transition",
-            status_code=409,
-            message="Conversation is not paused.",
-        )
+    ensure_transition_allowed(
+        action="resume",
+        current_status=conversation.status,
+        next_status=ConversationStatus.RUNNING.value,
+    )
     ensure_no_other_active_conversation(session, conversation.id)
     conversation.status = ConversationStatus.RUNNING.value
     conversation.updated_at = utc_now(clock)
@@ -757,15 +787,11 @@ def end_conversation(
     clock: Clock | None = None,
 ) -> ConversationRead:
     conversation = get_conversation_or_404(session, conversation_id)
-    if conversation.status not in {
-        ConversationStatus.RUNNING.value,
-        ConversationStatus.PAUSED.value,
-    }:
-        raise AppError(
-            code="invalid_transition",
-            status_code=409,
-            message="Conversation is not active.",
-        )
+    ensure_transition_allowed(
+        action="end",
+        current_status=conversation.status,
+        next_status=ConversationStatus.ENDED.value,
+    )
     now = utc_now(clock)
     conversation.status = ConversationStatus.ENDED.value
     conversation.ended_at = now

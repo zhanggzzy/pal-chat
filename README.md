@@ -20,16 +20,16 @@ contracts, technology decisions, and delivery sequence are recorded in
 
 ## Backend foundation
 
-This repository now includes the initial backend contract and schema layer
-under `apps/server`:
+This repository now includes the phase 1 experiment skeleton under `apps/server`:
 
-- FastAPI app with `/health/live`, `/health/ready`, conversation/message/run
-  endpoints, timeline queries, and an SSE replay endpoint.
-- SQLAlchemy models plus Alembic schema `20260728_0001` for conversations,
-  messages, topics, runs, decisions, snapshots, model calls, events, and
-  request idempotency.
-- SQLite WAL initialization on startup.
-- A programmable fake `ModelGateway` for deterministic tests.
+- FastAPI app with `/health/live`, `/health/ready`, `/api/v1/bootstrap`,
+  credential, profile-template, and conversation lifecycle endpoints.
+- SQLAlchemy catalog schema plus Alembic revision `20260729_0001` for
+  profile templates, credential metadata, and conversation catalog records.
+- `catalog.sqlite` plus per-experiment archive layout with `manifest.json`,
+  `observations.ndjson`, and `transcript.sqlite` bootstrap.
+- Static module registry, compatibility validation, credential masking,
+  virtual clock support, and a scripted model adapter for deterministic tests.
 
 ## Local setup
 
