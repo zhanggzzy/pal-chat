@@ -158,8 +158,8 @@ class AgentRuntimeManager:
                     INSERT INTO agent_runtime_state(
                       agent_id, worker_state, reliable_seq, dirty_since_seq,
                       pending_message_ids_json, pending_root_message_ids_json, active_run_id,
-                      typing_status, restart_count, profile_hash, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      typing_status, typing_run_id, restart_count, profile_hash, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(agent_id) DO UPDATE SET
                       worker_state = excluded.worker_state,
                       profile_hash = excluded.profile_hash,
@@ -174,6 +174,7 @@ class AgentRuntimeManager:
                         _json_list(worker.pending_root_message_ids),
                         worker.active_run_id,
                         worker.typing_status,
+                        worker.active_run_id if worker.typing_status == "active" else None,
                         worker.restart_count,
                         runtime.profile_hash,
                         utc_now(self.clock).isoformat(),
@@ -881,8 +882,8 @@ class AgentRuntimeManager:
                 INSERT INTO agent_runtime_state(
                   agent_id, worker_state, reliable_seq, dirty_since_seq,
                   pending_message_ids_json, pending_root_message_ids_json, active_run_id,
-                  typing_status, restart_count, profile_hash, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  typing_status, typing_run_id, restart_count, profile_hash, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(agent_id) DO UPDATE SET
                   worker_state = excluded.worker_state,
                   reliable_seq = excluded.reliable_seq,
@@ -891,6 +892,7 @@ class AgentRuntimeManager:
                   pending_root_message_ids_json = excluded.pending_root_message_ids_json,
                   active_run_id = excluded.active_run_id,
                   typing_status = excluded.typing_status,
+                  typing_run_id = excluded.typing_run_id,
                   restart_count = excluded.restart_count,
                   profile_hash = excluded.profile_hash,
                   updated_at = excluded.updated_at
@@ -904,6 +906,7 @@ class AgentRuntimeManager:
                     _json_list(worker.pending_root_message_ids),
                     worker.active_run_id,
                     worker.typing_status,
+                    worker.active_run_id if worker.typing_status == "active" else None,
                     worker.restart_count,
                     worker.profile_hash,
                     utc_now(self.clock).isoformat(),

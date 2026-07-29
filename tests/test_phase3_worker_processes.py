@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import signal
 import sqlite3
@@ -175,7 +176,7 @@ def agent_runs(conversation_id: str) -> list[sqlite3.Row]:
     return fetch_rows(
         conversation_id,
         """
-        SELECT agent_id, status, phase, causal_episode_id, caused_by_message_id,
+        SELECT run_id, agent_id, status, phase, causal_episode_id, caused_by_message_id,
                agent_hop, finished_at
         FROM agent_runs
         ORDER BY started_at, agent_id
@@ -183,19 +184,64 @@ def agent_runs(conversation_id: str) -> list[sqlite3.Row]:
     )
 
 
-def typing_events(conversation_id: str) -> list[str]:
+def typing_event_rows(conversation_id: str) -> list[dict[str, Any]]:
+    rows = fetch_rows(
+        conversation_id,
+        """
+        SELECT rowid, event_id, event_type, payload_json, created_at
+        FROM outbox_events
+        WHERE event_type IN ('agent.typing_started', 'agent.typing_stopped')
+        ORDER BY rowid
+        """,
+    )
     return [
-        row["event_type"]
+        {
+            "event_id": row["event_id"],
+            "event_type": row["event_type"],
+            "payload": json.loads(row["payload_json"]),
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+
+
+def typing_events(conversation_id: str) -> list[str]:
+    return [row["event_type"] for row in typing_event_rows(conversation_id)]
+
+
+def runtime_state_rows(conversation_id: str) -> list[dict[str, Any]]:
+    return [
+        dict(row)
         for row in fetch_rows(
             conversation_id,
             """
-            SELECT event_type
-            FROM outbox_events
-            WHERE event_type IN ('agent.typing_started', 'agent.typing_stopped')
-            ORDER BY created_at
+            SELECT agent_id, worker_state, active_run_id, typing_status, typing_run_id,
+                   reliable_seq, dirty_since_seq
+            FROM agent_runtime_state
+            ORDER BY agent_id
             """,
         )
     ]
+
+
+def runtime_state_for_agent(conversation_id: str, agent_id: str) -> dict[str, Any] | None:
+    for row in runtime_state_rows(conversation_id):
+        if row["agent_id"] == agent_id:
+            return row
+    return None
+
+
+def h06_trace(
+    server: LiveServer,
+    conversation_id: str,
+) -> dict[str, Any]:
+    return {
+        "typing_events": typing_event_rows(conversation_id),
+        "runs": [dict(row) for row in agent_runs(conversation_id)],
+        "messages": agent_messages(server.client, conversation_id),
+        "runtime_state": runtime_state_rows(conversation_id),
+        "worker_snapshot": worker_snapshot(server, conversation_id),
+    }
 
 
 def test_h03_live_direct_mention_obligates_single_agent(
@@ -347,12 +393,63 @@ def test_h06_live_interruption_invalidates_stale_draft_and_cancels_typing(
         == ["只保留新的回复"]
     )
     wait_until(lambda: run_statuses(conversation_id) == ["INVALIDATED", "COMMITTED"])
-    assert typing_events(conversation_id) == [
-        "agent.typing_started",
-        "agent.typing_stopped",
-        "agent.typing_started",
-        "agent.typing_stopped",
-    ]
+    trace = h06_trace(live_process_server, conversation_id)
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        trace = h06_trace(live_process_server, conversation_id)
+        if runtime_state_for_agent(conversation_id, "agent-a") == {
+            "active_run_id": None,
+            "agent_id": "agent-a",
+            "dirty_since_seq": None,
+            "reliable_seq": runtime_state_for_agent(conversation_id, "agent-a")["reliable_seq"],
+            "typing_run_id": None,
+            "typing_status": "idle",
+            "worker_state": "LISTENING",
+        }:
+            break
+        time.sleep(0.05)
+    trace = h06_trace(live_process_server, conversation_id)
+    assert [row["event_id"] for row in trace["typing_events"]] == list(
+        dict.fromkeys(row["event_id"] for row in trace["typing_events"])
+    ), json.dumps(trace, ensure_ascii=False, indent=2, sort_keys=True)
+    run_ids = [row["run_id"] for row in trace["runs"]]
+    assert len(run_ids) == 2, json.dumps(trace, ensure_ascii=False, indent=2, sort_keys=True)
+    assert [row["status"] for row in trace["runs"]] == [
+        "INVALIDATED",
+        "COMMITTED",
+    ], json.dumps(trace, ensure_ascii=False, indent=2, sort_keys=True)
+    typing_by_run = {
+        run_id: [
+            item["event_type"]
+            for item in trace["typing_events"]
+            if item["payload"].get("run_id") == run_id
+        ]
+        for run_id in run_ids
+    }
+    assert typing_by_run == {
+        run_ids[0]: ["agent.typing_started", "agent.typing_stopped"],
+        run_ids[1]: ["agent.typing_started", "agent.typing_stopped"],
+    }, json.dumps(trace, ensure_ascii=False, indent=2, sort_keys=True)
+    assert runtime_state_for_agent(conversation_id, "agent-a") == {
+        "active_run_id": None,
+        "agent_id": "agent-a",
+        "dirty_since_seq": None,
+        "reliable_seq": runtime_state_for_agent(conversation_id, "agent-a")["reliable_seq"],
+        "typing_run_id": None,
+        "typing_status": "idle",
+        "worker_state": "LISTENING",
+    }, json.dumps(trace, ensure_ascii=False, indent=2, sort_keys=True)
+    assert trace["runtime_state"] == [
+        {
+            "active_run_id": None,
+            "agent_id": "agent-a",
+            "dirty_since_seq": None,
+            "reliable_seq": trace["runtime_state"][0]["reliable_seq"],
+            "typing_run_id": None,
+            "typing_status": "idle",
+            "worker_state": "LISTENING",
+        },
+    ], json.dumps(trace, ensure_ascii=False, indent=2, sort_keys=True)
 
 
 def test_h07_live_episode_budget_stops_after_four_two_two(

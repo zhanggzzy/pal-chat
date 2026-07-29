@@ -91,6 +91,7 @@ from pal_chat_server.sequence_runtime import (
     replay_events,
     retry_submission,
     session_snapshot,
+    utc_now,
 )
 from pal_chat_server.services import (
     bootstrap_payload,
@@ -193,13 +194,14 @@ def create_app() -> FastAPI:
         payload: dict[str, Any],
         conversation_seq: int | None = None,
     ) -> None:
+        created_at = utc_now().isoformat()
         with connect_transcript(conversation) as connection:
             connection.execute(
                 """
                 INSERT INTO outbox_events(
                   event_id, event_type, conversation_seq, payload_json, status,
                   dispatch_attempts, dispatched_at, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(uuid4()),
@@ -209,6 +211,7 @@ def create_app() -> FastAPI:
                     "pending",
                     0,
                     None,
+                    created_at,
                 ),
             )
             connection.commit()
@@ -221,12 +224,13 @@ def create_app() -> FastAPI:
         payload: dict[str, Any],
         conversation_seq: int | None = None,
     ) -> None:
+        created_at = utc_now().isoformat()
         connection.execute(
             """
             INSERT INTO outbox_events(
               event_id, event_type, conversation_seq, payload_json, status,
               dispatch_attempts, dispatched_at, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(uuid4()),
@@ -236,6 +240,7 @@ def create_app() -> FastAPI:
                 "pending",
                 0,
                 None,
+                created_at,
             ),
         )
 
@@ -308,6 +313,11 @@ def create_app() -> FastAPI:
 
     def typing_status(action: object) -> str:
         return "active" if action == "start" else "idle"
+
+    def current_run_id(value: object) -> str | None:
+        if value in (None, "-"):
+            return None
+        return str(value)
 
     def restart_count_for(
         conversation: ConversationRecord,
@@ -1332,7 +1342,7 @@ def create_app() -> FastAPI:
         with connect_transcript(conversation) as connection:
             state_row = connection.execute(
                 """
-                SELECT worker_state, typing_status
+                SELECT worker_state, active_run_id, typing_status, typing_run_id
                 FROM agent_runtime_state
                 WHERE agent_id = ?
                 """,
@@ -1350,6 +1360,18 @@ def create_app() -> FastAPI:
                 ).fetchone()
             profile = conversation_profile(conversation)
             active_run_id = payload.get("active_run_id")
+            current_active_run_id = (
+                None if state_row is None else current_run_id(state_row["active_run_id"])
+            )
+            current_typing_status = (
+                "idle" if state_row is None else str(state_row["typing_status"])
+            )
+            current_typing_run_id = (
+                None if state_row is None else current_run_id(state_row["typing_run_id"])
+            )
+            current_worker_state = (
+                None if state_row is None else str(state_row["worker_state"])
+            )
             worker_state = str(payload.get("worker_state", "LISTENING"))
             run_status = str(payload.get("run_status", "RUNNING"))
             terminal_statuses = {
@@ -1360,20 +1382,37 @@ def create_app() -> FastAPI:
                 "PAUSED",
                 "SILENT",
             }
-            persisted_active_run_id = (
+            request_run_id = current_run_id(run_id)
+            next_active_run_id = (
                 None
                 if run_status in terminal_statuses or active_run_id in (None, "-")
                 else str(active_run_id)
             )
-            persisted_typing_status = (
-                "idle"
-                if run_status in terminal_statuses
-                else typing_status(payload.get("typing_action"))
+            should_apply_runtime_state = (
+                current_active_run_id is None
+                if request_run_id is None
+                else current_active_run_id in (None, request_run_id)
             )
-            typing_state_changed = (
-                state_row is not None
-                and str(state_row["typing_status"]) != persisted_typing_status
+            next_worker_state = (
+                worker_state if should_apply_runtime_state else current_worker_state
             )
+            next_runtime_run_id = (
+                next_active_run_id if should_apply_runtime_state else current_active_run_id
+            )
+            next_typing_status = current_typing_status
+            next_typing_run_id = current_typing_run_id
+            terminal_closes_typing = (
+                request_run_id is not None
+                and run_status in terminal_statuses
+                and current_typing_status == "active"
+                and current_typing_run_id == request_run_id
+            )
+            if should_apply_runtime_state and state_row is None:
+                next_typing_status = "idle"
+                next_typing_run_id = None
+            if terminal_closes_typing:
+                next_typing_status = "idle"
+                next_typing_run_id = None
             decision_json = payload.get("decision_json")
             draft_message_json = payload.get("draft_message_json")
             connection.execute(
@@ -1381,27 +1420,29 @@ def create_app() -> FastAPI:
                 INSERT INTO agent_runtime_state(
                   agent_id, worker_state, reliable_seq, dirty_since_seq,
                   pending_message_ids_json, pending_root_message_ids_json, active_run_id,
-                  typing_status, restart_count, profile_hash, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                  typing_status, typing_run_id, restart_count, profile_hash, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(agent_id) DO UPDATE SET
                   worker_state = excluded.worker_state,
                   reliable_seq = excluded.reliable_seq,
                   dirty_since_seq = excluded.dirty_since_seq,
                   active_run_id = excluded.active_run_id,
                   typing_status = excluded.typing_status,
+                  typing_run_id = excluded.typing_run_id,
                   restart_count = excluded.restart_count,
                   profile_hash = excluded.profile_hash,
                   updated_at = CURRENT_TIMESTAMP
                 """,
                 (
                     agent_id,
-                    worker_state,
+                    next_worker_state,
                     payload_required_int(payload, "reliable_seq"),
                     payload_optional_int(payload, "dirty_since_seq"),
                     json.dumps([]),
                     json.dumps([]),
-                    persisted_active_run_id,
-                    persisted_typing_status,
+                    next_runtime_run_id,
+                    next_typing_status,
+                    next_typing_run_id,
                     restart_count_for(
                         conversation,
                         profile=profile,
@@ -1481,10 +1522,7 @@ def create_app() -> FastAPI:
                     ),
                 )
             if (
-                run_id != "-"
-                and run_status in terminal_statuses
-                and typing_state_changed
-                and persisted_typing_status == "idle"
+                terminal_closes_typing
             ):
                 queue_public_event_row(
                     connection,
@@ -1497,14 +1535,14 @@ def create_app() -> FastAPI:
                 )
             connection.commit()
         dispatch_pending_outbox(conversation)
-        if state_row is None or state_row["worker_state"] != worker_state:
+        if should_apply_runtime_state and current_worker_state != next_worker_state:
             enqueue_public_event(
                 conversation,
                 event_type="agent.state_changed",
                 payload={
                     "agent_id": agent_id,
-                    "from_state": None if state_row is None else state_row["worker_state"],
-                    "to_state": worker_state,
+                    "from_state": current_worker_state,
+                    "to_state": next_worker_state,
                     "run_id": None if run_id == "-" else run_id,
                     "reason": run_status,
                 },
@@ -1576,26 +1614,49 @@ def create_app() -> FastAPI:
         with connect_transcript(conversation) as connection:
             state_row = connection.execute(
                 """
-                SELECT typing_status
+                SELECT active_run_id, typing_status, typing_run_id
                 FROM agent_runtime_state
                 WHERE agent_id = ?
                 """,
                 (agent_id,),
             ).fetchone()
+            current_active_run_id = (
+                None if state_row is None else current_run_id(state_row["active_run_id"])
+            )
             current_typing_status = (
                 "idle" if state_row is None else str(state_row["typing_status"])
             )
-            if current_typing_status == desired_typing_status:
+            current_typing_run_id = (
+                None if state_row is None else current_run_id(state_row["typing_run_id"])
+            )
+            request_run_id = current_run_id(run_id)
+            if (
+                current_typing_status == desired_typing_status
+                and current_typing_run_id == request_run_id
+            ):
                 return {"ok": "true"}
-            if state_row is not None:
-                connection.execute(
-                    """
-                    UPDATE agent_runtime_state
-                    SET typing_status = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE agent_id = ?
-                    """,
-                    (desired_typing_status, agent_id),
-                )
+            should_emit = False
+            next_typing_run_id = current_typing_run_id
+            if desired_typing_status == "active":
+                if current_active_run_id != request_run_id or current_typing_status != "idle":
+                    return {"ok": "true"}
+                next_typing_run_id = request_run_id
+                should_emit = True
+            else:
+                if current_typing_status != "active" or current_typing_run_id != request_run_id:
+                    return {"ok": "true"}
+                next_typing_run_id = None
+                should_emit = True
+            if state_row is None or not should_emit:
+                return {"ok": "true"}
+            connection.execute(
+                """
+                UPDATE agent_runtime_state
+                SET typing_status = ?, typing_run_id = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE agent_id = ?
+                """,
+                (desired_typing_status, next_typing_run_id, agent_id),
+            )
             queue_public_event_row(
                 connection,
                 event_type=event_type,

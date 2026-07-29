@@ -105,6 +105,7 @@ class RawWebSocketClient:
         if b"101" not in status_line:
             status_text = status_line.decode("utf-8", "ignore")
             raise RuntimeError(f"websocket handshake rejected: {status_text}")
+        sock.settimeout(None)
         self.sock = sock
 
     def recv_json(self) -> dict[str, Any]:

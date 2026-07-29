@@ -420,18 +420,19 @@ class WorkerSupervisor:
                 INSERT INTO agent_runtime_state(
                   agent_id, worker_state, reliable_seq, dirty_since_seq,
                   pending_message_ids_json, pending_root_message_ids_json, active_run_id,
-                  typing_status, restart_count, profile_hash, updated_at
+                  typing_status, typing_run_id, restart_count, profile_hash, updated_at
                 )
                 SELECT
                   agent_id, ?, reliable_seq, dirty_since_seq,
                   pending_message_ids_json, pending_root_message_ids_json, NULL,
-                  'idle', ?, profile_hash, CURRENT_TIMESTAMP
+                  'idle', NULL, ?, profile_hash, CURRENT_TIMESTAMP
                 FROM agent_runtime_state
                 WHERE agent_id = ?
                 ON CONFLICT(agent_id) DO UPDATE SET
                   worker_state = excluded.worker_state,
                   active_run_id = NULL,
                   typing_status = excluded.typing_status,
+                  typing_run_id = excluded.typing_run_id,
                   restart_count = excluded.restart_count,
                   updated_at = CURRENT_TIMESTAMP
                 """,

@@ -386,10 +386,10 @@ def replay_events(conversation: ConversationRecord, *, after_seq: int) -> list[d
     with connect_transcript(conversation) as connection:
         rows = connection.execute(
             """
-            SELECT event_id, event_type, conversation_seq, payload_json, created_at
+            SELECT rowid, event_id, event_type, conversation_seq, payload_json, created_at
             FROM outbox_events
             WHERE conversation_seq IS NOT NULL AND conversation_seq > ?
-            ORDER BY conversation_seq, created_at
+            ORDER BY conversation_seq, rowid
             """,
             (after_seq,),
         ).fetchall()
@@ -908,10 +908,10 @@ def dispatch_pending_outbox(
         connection.execute("BEGIN IMMEDIATE")
         rows = connection.execute(
             """
-            SELECT event_id, event_type, conversation_seq, payload_json, created_at
+            SELECT rowid, event_id, event_type, conversation_seq, payload_json, created_at
             FROM outbox_events
             WHERE dispatched_at IS NULL
-            ORDER BY created_at, event_id
+            ORDER BY rowid
             """
         ).fetchall()
         for row in rows:

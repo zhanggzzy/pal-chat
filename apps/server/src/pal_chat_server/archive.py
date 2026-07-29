@@ -103,6 +103,7 @@ TRANSCRIPT_SCHEMA = (
       pending_root_message_ids_json TEXT NOT NULL DEFAULT '[]',
       active_run_id TEXT NULL,
       typing_status TEXT NOT NULL,
+      typing_run_id TEXT NULL,
       restart_count INTEGER NOT NULL DEFAULT 0,
       profile_hash TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -159,6 +160,14 @@ def ensure_archive_layout(settings: Settings, conversation_id: str) -> Path:
     with sqlite3.connect(transcript) as connection:
         for statement in TRANSCRIPT_SCHEMA:
             connection.execute(statement)
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(agent_runtime_state)")
+        }
+        if "typing_run_id" not in columns:
+            connection.execute(
+                "ALTER TABLE agent_runtime_state ADD COLUMN typing_run_id TEXT NULL"
+            )
         connection.commit()
     return root
 
