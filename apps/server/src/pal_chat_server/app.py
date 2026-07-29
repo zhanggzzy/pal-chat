@@ -26,13 +26,32 @@ from pal_chat_server.db import (
 )
 from pal_chat_server.errors import AppError, build_error_response
 from pal_chat_server.models import ConversationRecord, ConversationStatus
+from pal_chat_server.monitoring import (
+    get_cost_breakdown,
+    get_memory_revision,
+    get_run,
+    list_attempts,
+    list_causal_episodes,
+    list_context_bundles,
+    list_logs,
+    list_memory_revisions,
+    list_runs,
+)
 from pal_chat_server.schemas import (
+    AgentRunListResponse,
+    AgentRunRead,
+    AttemptListResponse,
     BootstrapResponse,
     CatalogMetadataPatchRequest,
+    CausalEpisodeListResponse,
+    CausalEpisodeRead,
+    ContextBundleListResponse,
+    ContextBundleRead,
     ConversationCreateRequest,
     ConversationDetailResponse,
     ConversationListResponse,
     ConversationRead,
+    CostBreakdownRead,
     CpRevisionListResponse,
     CpRevisionRead,
     CredentialCreateRequest,
@@ -43,6 +62,10 @@ from pal_chat_server.schemas import (
     ExperimentProfile,
     GuardrailPatchRequest,
     HealthResponse,
+    LogEntryListResponse,
+    LogEntryRead,
+    MemoryRevisionListResponse,
+    MemoryRevisionRead,
     MessageCommitResponse,
     MessageListResponse,
     MessageRead,
@@ -52,6 +75,7 @@ from pal_chat_server.schemas import (
     ProfileTemplateListResponse,
     ProfileTemplateRead,
     ProfileTemplateUpdateRequest,
+    RunAttemptRead,
     ValidationResult,
 )
 from pal_chat_server.sequence_runtime import (
@@ -161,6 +185,34 @@ def create_app() -> FastAPI:
 
     def publish_runtime_event(conversation_id: str, event: dict[str, Any]) -> None:
         get_worker_supervisor().publish_public_event(conversation_id, event)
+
+    def enqueue_public_event(
+        conversation: ConversationRecord,
+        *,
+        event_type: str,
+        payload: dict[str, Any],
+        conversation_seq: int | None = None,
+    ) -> None:
+        with connect_transcript(conversation) as connection:
+            connection.execute(
+                """
+                INSERT INTO outbox_events(
+                  event_id, event_type, conversation_seq, payload_json, status,
+                  dispatch_attempts, dispatched_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    str(uuid4()),
+                    event_type,
+                    conversation_seq,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                    "pending",
+                    0,
+                    None,
+                ),
+            )
+            connection.commit()
+        dispatch_pending_outbox(conversation)
 
     def internal_auth_tuple(request: Request) -> tuple[str, str, str]:
         authorization = request.headers.get("Authorization", "")
@@ -697,12 +749,27 @@ def create_app() -> FastAPI:
     ) -> ConversationRead:
         _catalog_bootstrap(db, settings)
         patch = payload.model_dump(mode="json", exclude_none=True)
-        return patch_guardrails(
+        conversation = get_conversation_or_404(db, conversation_id)
+        before = dict(conversation.guardrails_json)
+        updated = patch_guardrails(
             db,
             conversation_id=conversation_id,
             patch=patch,
             settings=settings,
         )
+        record = get_conversation_or_404(db, conversation_id)
+        if record.archive_dir is not None and before != record.guardrails_json:
+            changed_fields = {
+                key: {"from": before.get(key), "to": record.guardrails_json.get(key)}
+                for key in sorted(set(before) | set(record.guardrails_json))
+                if before.get(key) != record.guardrails_json.get(key)
+            }
+            enqueue_public_event(
+                record,
+                event_type="guardrails.changed",
+                payload={"changed_fields": changed_fields, "guardrails": record.guardrails_json},
+            )
+        return updated
 
     @app.patch(
         "/api/v1/conversations/{conversation_id}/catalog-metadata",
@@ -860,8 +927,193 @@ def create_app() -> FastAPI:
                 code="archive_missing",
                 status_code=409,
                 message="Conversation archive is missing.",
-            )
+        )
         return CpRevisionRead.model_validate(get_cp_revision(conversation, projection_revision))
+
+    @app.get(
+        "/api/v1/conversations/{conversation_id}/runs",
+        response_model=AgentRunListResponse,
+        tags=["monitoring"],
+    )
+    def get_conversation_runs(
+        conversation_id: str,
+        agent_id: str | None = None,
+        status_filter: str | None = None,
+        limit: int = 100,
+        after: str | None = None,
+        db: Session = Depends(get_db_session),
+    ) -> AgentRunListResponse:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        profile = conversation_profile(conversation)
+        items = list_runs(
+            conversation,
+            profile=profile,
+            agent_id=agent_id,
+            run_status=status_filter,
+            limit=max(1, min(limit, 500)),
+            after=after,
+        )
+        return AgentRunListResponse(items=[AgentRunRead.model_validate(item) for item in items])
+
+    @app.get(
+        "/api/v1/conversations/{conversation_id}/runs/{run_id}",
+        response_model=AgentRunRead,
+        tags=["monitoring"],
+    )
+    def get_conversation_run(
+        conversation_id: str,
+        run_id: str,
+        db: Session = Depends(get_db_session),
+    ) -> AgentRunRead:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        return AgentRunRead.model_validate(
+            get_run(conversation, profile=conversation_profile(conversation), run_id=run_id)
+        )
+
+    @app.get(
+        "/api/v1/conversations/{conversation_id}/agents/{agent_id}/memory/revisions",
+        response_model=MemoryRevisionListResponse,
+        tags=["monitoring"],
+    )
+    def get_agent_memory_revisions(
+        conversation_id: str,
+        agent_id: str,
+        db: Session = Depends(get_db_session),
+    ) -> MemoryRevisionListResponse:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        items = list_memory_revisions(
+            conversation,
+            profile=conversation_profile(conversation),
+            agent_id=agent_id,
+        )
+        return MemoryRevisionListResponse(
+            items=[MemoryRevisionRead.model_validate(item) for item in items]
+        )
+
+    @app.get(
+        "/api/v1/conversations/{conversation_id}/agents/{agent_id}/memory/revisions/{revision}",
+        response_model=MemoryRevisionRead,
+        tags=["monitoring"],
+    )
+    def get_agent_memory_revision(
+        conversation_id: str,
+        agent_id: str,
+        revision: str,
+        db: Session = Depends(get_db_session),
+    ) -> MemoryRevisionRead:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        item = get_memory_revision(
+            conversation,
+            profile=conversation_profile(conversation),
+            agent_id=agent_id,
+            revision=revision,
+        )
+        return MemoryRevisionRead.model_validate(item)
+
+    @app.get(
+        "/api/v1/conversations/{conversation_id}/logs",
+        response_model=LogEntryListResponse,
+        tags=["monitoring"],
+    )
+    def get_conversation_logs(
+        conversation_id: str,
+        run_id: str | None = None,
+        phase: str | None = None,
+        level: str | None = None,
+        limit: int = 200,
+        db: Session = Depends(get_db_session),
+    ) -> LogEntryListResponse:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        items = list_logs(
+            conversation,
+            profile=conversation_profile(conversation),
+            run_id=run_id,
+            phase=phase,
+            level=level,
+            limit=max(1, min(limit, 500)),
+        )
+        return LogEntryListResponse(items=[LogEntryRead.model_validate(item) for item in items])
+
+    @app.get(
+        "/api/v1/conversations/{conversation_id}/agents/{agent_id}/context-bundles",
+        response_model=ContextBundleListResponse,
+        tags=["monitoring"],
+    )
+    def get_agent_context_bundles(
+        conversation_id: str,
+        agent_id: str,
+        run_id: str | None = None,
+        db: Session = Depends(get_db_session),
+    ) -> ContextBundleListResponse:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        items = list_context_bundles(
+            conversation,
+            profile=conversation_profile(conversation),
+            agent_id=agent_id,
+            run_id=run_id,
+        )
+        return ContextBundleListResponse(
+            items=[ContextBundleRead.model_validate(item) for item in items]
+        )
+
+    @app.get(
+        "/api/v1/conversations/{conversation_id}/agents/{agent_id}/attempts",
+        response_model=AttemptListResponse,
+        tags=["monitoring"],
+    )
+    def get_agent_attempts(
+        conversation_id: str,
+        agent_id: str,
+        run_id: str | None = None,
+        db: Session = Depends(get_db_session),
+    ) -> AttemptListResponse:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        items = list_attempts(
+            conversation,
+            profile=conversation_profile(conversation),
+            agent_id=agent_id,
+            run_id=run_id,
+        )
+        return AttemptListResponse(
+            items=[RunAttemptRead.model_validate(item) for item in items]
+        )
+
+    @app.get(
+        "/api/v1/conversations/{conversation_id}/causal-episodes",
+        response_model=CausalEpisodeListResponse,
+        tags=["monitoring"],
+    )
+    def get_conversation_causal_episodes(
+        conversation_id: str,
+        db: Session = Depends(get_db_session),
+    ) -> CausalEpisodeListResponse:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        items = list_causal_episodes(conversation)
+        return CausalEpisodeListResponse(
+            items=[CausalEpisodeRead.model_validate(item) for item in items]
+        )
+
+    @app.get(
+        "/api/v1/conversations/{conversation_id}/metrics/cost-breakdown",
+        response_model=CostBreakdownRead,
+        tags=["monitoring"],
+    )
+    def get_conversation_cost_breakdown(
+        conversation_id: str,
+        db: Session = Depends(get_db_session),
+    ) -> CostBreakdownRead:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        payload = get_cost_breakdown(conversation, profile=conversation_profile(conversation))
+        return CostBreakdownRead.model_validate(payload)
 
     @app.websocket("/ws/v1/conversations/{conversation_id}")
     async def conversation_events(
@@ -1053,6 +1305,24 @@ def create_app() -> FastAPI:
                 agent_id=agent_id,
             )
         with connect_transcript(conversation) as connection:
+            state_row = connection.execute(
+                """
+                SELECT worker_state
+                FROM agent_runtime_state
+                WHERE agent_id = ?
+                """,
+                (agent_id,),
+            ).fetchone()
+            run_row = None
+            if run_id != "-":
+                run_row = connection.execute(
+                    """
+                    SELECT status, phase, decision_json, draft_message_json
+                    FROM agent_runs
+                    WHERE run_id = ?
+                    """,
+                    (run_id,),
+                ).fetchone()
             profile = conversation_profile(conversation)
             active_run_id = payload.get("active_run_id")
             worker_state = str(payload.get("worker_state", "LISTENING"))
@@ -1182,6 +1452,54 @@ def create_app() -> FastAPI:
                     ),
                 )
             connection.commit()
+        if state_row is None or state_row["worker_state"] != worker_state:
+            enqueue_public_event(
+                conversation,
+                event_type="agent.state_changed",
+                payload={
+                    "agent_id": agent_id,
+                    "from_state": None if state_row is None else state_row["worker_state"],
+                    "to_state": worker_state,
+                    "run_id": None if run_id == "-" else run_id,
+                    "reason": run_status,
+                },
+            )
+        if run_id != "-":
+            previous_status = None if run_row is None else run_row["status"]
+            previous_phase = None if run_row is None else run_row["phase"]
+            previous_decision = None if run_row is None else run_row["decision_json"]
+            previous_draft = None if run_row is None else run_row["draft_message_json"]
+            next_decision = (
+                json.dumps(decision_json, ensure_ascii=False, sort_keys=True)
+                if decision_json is not None
+                else None
+            )
+            next_draft = (
+                json.dumps(draft_message_json, ensure_ascii=False, sort_keys=True)
+                if draft_message_json is not None
+                else None
+            )
+            if (
+                previous_status != run_status
+                or previous_phase != worker_state
+                or previous_decision != next_decision
+                or previous_draft != next_draft
+            ):
+                enqueue_public_event(
+                    conversation,
+                    event_type="agent.run_updated",
+                    payload={
+                        "agent_id": agent_id,
+                        "run_id": run_id,
+                        "status": run_status,
+                        "phase": worker_state,
+                        "decision_json": decision_json,
+                        "draft_message_json": draft_message_json,
+                        "causal_episode_id": payload.get("causal_episode_id"),
+                        "caused_by_message_id": payload.get("caused_by_message_id"),
+                        "agent_hop": payload_optional_int(payload, "agent_hop") or 0,
+                    },
+                )
         return {"ok": "true"}
 
     @app.post(

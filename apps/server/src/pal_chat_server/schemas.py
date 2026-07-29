@@ -348,3 +348,163 @@ class SessionSnapshotEnvelope(BaseModel):
     event_type: str = "session.snapshot"
     conversation_id: str
     payload: dict[str, Any]
+
+
+class RunAttemptRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    attempt_id: str
+    run_id: str
+    agent_id: str
+    phase: str
+    provider: str
+    model: str
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cost_usd: float
+    latency_ms: int | None
+    bundle_revision: str | None = None
+    memory_revision_before: str | None = None
+    memory_revision_after: str | None = None
+    staged_memory_revision: str | None = None
+    payload: dict[str, Any] | None = None
+    created_at: datetime
+
+
+class AttemptListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[RunAttemptRead]
+
+
+class AgentRunRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    agent_id: str
+    status: str
+    phase: str
+    observation_message_ids: list[str] = Field(default_factory=list)
+    root_message_ids: list[str] = Field(default_factory=list)
+    expected_conversation_seq: int
+    profile_hash: str
+    idempotency_key: str
+    causal_episode_id: str | None = None
+    caused_by_message_id: str | None = None
+    agent_hop: int = 0
+    decision_json: dict[str, Any] | None = None
+    draft_message_json: dict[str, Any] | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    started_at: datetime
+    updated_at: datetime
+    finished_at: datetime | None = None
+    latency_ms: int | None = None
+    attempts: list[RunAttemptRead] = Field(default_factory=list)
+
+
+class AgentRunListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[AgentRunRead]
+
+
+class MemoryRevisionRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    revision: str
+    counter: int = 0
+    module_id: str
+    payload: dict[str, Any]
+    committed_at: datetime | None = None
+    run_id: str | None = None
+    conversation_seq: int | None = None
+    cp_revision: int | None = None
+    bundle_revisions: list[str] = Field(default_factory=list)
+
+
+class MemoryRevisionListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[MemoryRevisionRead]
+
+
+class ContextBundleRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bundle_id: str
+    revision: str
+    phase: str
+    conversation_seq: int
+    projection_revision: int
+    memory_revision: str
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+    selected_public_refs: list[str] = Field(default_factory=list)
+    selected_private_refs: list[str] = Field(default_factory=list)
+    selection_trace: list[str] = Field(default_factory=list)
+    observation_message_ids: list[str] = Field(default_factory=list)
+    estimated_tokens: int
+    prompt_versions: dict[str, str] = Field(default_factory=dict)
+    rendered_items: list[str] = Field(default_factory=list)
+    as_of_time: datetime
+
+
+class ContextBundleListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[ContextBundleRead]
+
+
+class LogEntryRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    timestamp: datetime
+    level: str
+    phase: str | None = None
+    message: str
+    agent_id: str | None = None
+    run_id: str | None = None
+    attempt_id: str | None = None
+    details: dict[str, Any] | None = None
+
+
+class LogEntryListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[LogEntryRead]
+
+
+class CausalEpisodeRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    episode_id: str
+    root_message_ids: list[str] = Field(default_factory=list)
+    total_actions: int
+    agent_a_actions: int
+    agent_b_actions: int
+    max_agent_hop: int
+    updated_at: datetime
+
+
+class CausalEpisodeListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[CausalEpisodeRead]
+
+
+class CostBucketRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tokens: int
+    cost_usd: float
+
+
+class CostBreakdownRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    total_tokens: int
+    total_cost_usd: float
+    by_agent: dict[str, CostBucketRead] = Field(default_factory=dict)
+    by_phase: dict[str, CostBucketRead] = Field(default_factory=dict)
