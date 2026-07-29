@@ -3,17 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>pal-chat phase 1 bootstrap</title>
+    <title>pal-chat phase 2 public messages</title>
     <script type="module" src="/src/main.js"></script>
   </head>
   <body>
     <div class="page-shell">
       <header class="hero">
-        <p class="eyebrow">pal-chat / phase 1</p>
-        <h1>实验骨架与 bootstrap 控台</h1>
+        <p class="eyebrow">pal-chat / phase 2</p>
+        <h1>公共消息与 CP 增量面板</h1>
         <p class="hero-copy">
-          当前页面只负责冻结后的阶段 1 基线：模块注册、Profile/Guardrail、catalog/manifest、
-          凭据摘要与可复现启动命令。
+          当前页面只覆盖阶段 2 所需能力：公共消息顺序、CP revision、WebSocket 增量同步，以及前端
+          optimistic 提交状态。
         </p>
       </header>
 
@@ -53,10 +53,6 @@
             </div>
           </dl>
           <div id="note" class="notice hidden"></div>
-          <div class="command-stack">
-            <pre id="dev-command"></pre>
-            <pre id="build-command"></pre>
-          </div>
         </section>
 
         <section class="panel">
@@ -82,21 +78,36 @@
         <section class="panel">
           <div class="panel-head">
             <div>
-              <p class="eyebrow">Templates</p>
-              <h2>Profile 模板</h2>
+              <p class="eyebrow">Conversation</p>
+              <h2 id="conversation-title">未连接实验</h2>
             </div>
           </div>
-          <div id="templates" class="card-list"></div>
+          <p id="conversation-meta" class="muted"></p>
+          <div class="state-strip">
+            <span class="eyebrow">状态</span>
+            <strong id="conversation-state">-</strong>
+          </div>
+          <form id="message-form" class="composer">
+            <label class="field">
+              <span>Public Message</span>
+              <textarea
+                id="message-input"
+                rows="4"
+                placeholder="输入公共消息，前端会先以 pending optimistic 状态渲染。"
+              ></textarea>
+            </label>
+            <button type="submit">发送消息</button>
+          </form>
         </section>
 
         <section class="panel">
           <div class="panel-head">
             <div>
-              <p class="eyebrow">Credentials</p>
-              <h2>凭据摘要</h2>
+              <p class="eyebrow">Timeline</p>
+              <h2>消息流</h2>
             </div>
           </div>
-          <div id="credentials" class="card-list"></div>
+          <div id="messages" class="message-list"></div>
         </section>
       </main>
     </div>

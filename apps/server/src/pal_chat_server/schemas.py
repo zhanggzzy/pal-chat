@@ -242,3 +242,106 @@ class BootstrapResponse(BaseModel):
     state_transitions: list[TransitionRule]
     frontend: dict[str, str]
     note: str | None = None
+
+
+class MessageSubmitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    client_message_id: str = Field(min_length=1, max_length=128)
+    content_markdown: str = Field(min_length=1)
+    mentions: list[str] = Field(default_factory=list)
+    primary_reply_to: str | None = None
+    responds_to: list[str] = Field(default_factory=list)
+
+
+class MessageRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message_id: str
+    conversation_seq: int
+    sender_kind: str
+    sender_id: str
+    content_markdown: str
+    mentions: list[str] = Field(default_factory=list)
+    primary_reply_to: str | None
+    responds_to: list[str] = Field(default_factory=list)
+    client_message_id: str | None
+    committed_at: datetime
+    cp_revision: int
+
+
+class MessageCommitResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message: MessageRead
+    cp_revision: CpRevisionRead
+
+
+class MessageListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[MessageRead]
+
+
+class SegmentRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    segment_id: str
+    ordinal: int
+    status: str
+    message_refs: list[str] = Field(default_factory=list)
+    start_seq: int | None
+    end_seq: int | None
+    title: str
+    summary: str
+    base_activation: float
+    activation_updated_at: datetime
+    created_revision: int
+    closed_revision: int | None
+    projection_trace_ref: str
+
+
+class CpSnapshotRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    segments: list[SegmentRead] = Field(default_factory=list)
+    last_operation: str | None = None
+
+
+class CpRevisionRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    projection_revision: int
+    covered_through_seq: int
+    strategy_id: str
+    strategy_version: str
+    snapshot: CpSnapshotRead
+    trace_ref: str
+    created_at: datetime
+
+
+class CpRevisionListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[CpRevisionRead]
+
+
+class OutboxEventEnvelope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    protocol_version: int = 1
+    event_id: str
+    event_type: str
+    conversation_id: str
+    emitted_at: datetime | None = None
+    conversation_seq: int | None = None
+    payload: dict[str, Any]
+
+
+class SessionSnapshotEnvelope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    protocol_version: int = 1
+    event_type: str = "session.snapshot"
+    conversation_id: str
+    payload: dict[str, Any]

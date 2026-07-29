@@ -4,7 +4,15 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Request, Response, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -14,8 +22,14 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from pal_chat_server.config import Settings, get_settings
-from pal_chat_server.db import get_db_session, get_engine
+from pal_chat_server.db import (
+    ensure_catalog_schema,
+    get_db_session,
+    get_engine,
+    get_session_factory,
+)
 from pal_chat_server.errors import AppError, build_error_response
+from pal_chat_server.models import ConversationRecord, ConversationStatus
 from pal_chat_server.schemas import (
     BootstrapResponse,
     CatalogMetadataPatchRequest,
@@ -23,6 +37,8 @@ from pal_chat_server.schemas import (
     ConversationDetailResponse,
     ConversationListResponse,
     ConversationRead,
+    CpRevisionListResponse,
+    CpRevisionRead,
     CredentialCreateRequest,
     CredentialListResponse,
     CredentialValidateResponse,
@@ -31,12 +47,27 @@ from pal_chat_server.schemas import (
     ExperimentProfile,
     GuardrailPatchRequest,
     HealthResponse,
+    MessageCommitResponse,
+    MessageListResponse,
+    MessageRead,
+    MessageSubmitRequest,
     ProfileCloneResponse,
     ProfileTemplateCreateRequest,
     ProfileTemplateListResponse,
     ProfileTemplateRead,
     ProfileTemplateUpdateRequest,
     ValidationResult,
+)
+from pal_chat_server.sequence_runtime import (
+    SOCKET_MANAGER,
+    MessagePayload,
+    commit_message,
+    get_cp_revision,
+    list_cp_revisions,
+    list_messages,
+    replay_events,
+    retry_submission,
+    session_snapshot,
 )
 from pal_chat_server.services import (
     bootstrap_payload,
@@ -99,6 +130,33 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    def conversation_profile(conversation: ConversationRecord) -> ExperimentProfile:
+        locked = getattr(conversation, "locked_profile_json", None)
+        draft = getattr(conversation, "draft_profile_json", None)
+        source = locked or draft
+        if source is None:
+            raise AppError(
+                code="profile_missing",
+                status_code=409,
+                message="Conversation profile is missing.",
+            )
+        return ExperimentProfile.model_validate(source)
+
+    def ensure_conversation_write_allowed(conversation_status: str) -> None:
+        if conversation_status == ConversationStatus.RUNNING.value:
+            return
+        if conversation_status == ConversationStatus.ENDED.value:
+            raise AppError(
+                code="conversation_read_only",
+                status_code=409,
+                message="Ended conversations are read-only.",
+            )
+        raise AppError(
+            code="conversation_not_running",
+            status_code=409,
+            message="Conversation must be running before accepting messages.",
+        )
 
     @app.middleware("http")
     async def add_request_id(
@@ -535,6 +593,143 @@ def create_app() -> FastAPI:
             metadata=payload.metadata,
             settings=settings,
         )
+
+    @app.post(
+        "/api/v1/conversations/{conversation_id}/messages",
+        response_model=MessageCommitResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["messages"],
+    )
+    def post_conversation_message(
+        conversation_id: str,
+        payload: MessageSubmitRequest,
+        db: Session = Depends(get_db_session),
+    ) -> MessageCommitResponse:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        ensure_conversation_write_allowed(conversation.status)
+        message, cp_revision, _ = commit_message(
+            conversation,
+            profile=conversation_profile(conversation),
+            payload=MessagePayload(**payload.model_dump()),
+        )
+        return MessageCommitResponse(
+            message=MessageRead.model_validate(message),
+            cp_revision=CpRevisionRead.model_validate(cp_revision),
+        )
+
+    @app.post(
+        "/api/v1/conversations/{conversation_id}/submissions/{client_message_id}/retry",
+        response_model=MessageCommitResponse,
+        tags=["messages"],
+    )
+    def post_retry_submission(
+        conversation_id: str,
+        client_message_id: str,
+        db: Session = Depends(get_db_session),
+    ) -> MessageCommitResponse:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        ensure_conversation_write_allowed(conversation.status)
+        message, cp_revision, _ = retry_submission(
+            conversation,
+            profile=conversation_profile(conversation),
+            client_message_id=client_message_id,
+        )
+        return MessageCommitResponse(
+            message=MessageRead.model_validate(message),
+            cp_revision=CpRevisionRead.model_validate(cp_revision),
+        )
+
+    @app.get(
+        "/api/v1/conversations/{conversation_id}/messages",
+        response_model=MessageListResponse,
+        tags=["messages"],
+    )
+    def get_conversation_messages(
+        conversation_id: str,
+        after_seq: int = 0,
+        limit: int = 200,
+        db: Session = Depends(get_db_session),
+    ) -> MessageListResponse:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        if conversation.archive_dir is None:
+            raise AppError(
+                code="archive_missing",
+                status_code=409,
+                message="Conversation archive is missing.",
+            )
+        items = list_messages(
+            conversation,
+            after_seq=max(after_seq, 0),
+            limit=max(1, min(limit, 500)),
+        )
+        return MessageListResponse(items=[MessageRead.model_validate(item) for item in items])
+
+    @app.get(
+        "/api/v1/conversations/{conversation_id}/cp-revisions",
+        response_model=CpRevisionListResponse,
+        tags=["cp"],
+    )
+    def get_conversation_cp_revisions(
+        conversation_id: str,
+        db: Session = Depends(get_db_session),
+    ) -> CpRevisionListResponse:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        if conversation.archive_dir is None:
+            raise AppError(
+                code="archive_missing",
+                status_code=409,
+                message="Conversation archive is missing.",
+            )
+        items = list_cp_revisions(conversation)
+        return CpRevisionListResponse(items=[CpRevisionRead.model_validate(item) for item in items])
+
+    @app.get(
+        "/api/v1/conversations/{conversation_id}/cp-revisions/{projection_revision}",
+        response_model=CpRevisionRead,
+        tags=["cp"],
+    )
+    def get_conversation_cp_revision(
+        conversation_id: str,
+        projection_revision: int,
+        db: Session = Depends(get_db_session),
+    ) -> CpRevisionRead:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        if conversation.archive_dir is None:
+            raise AppError(
+                code="archive_missing",
+                status_code=409,
+                message="Conversation archive is missing.",
+            )
+        return CpRevisionRead.model_validate(get_cp_revision(conversation, projection_revision))
+
+    @app.websocket("/ws/v1/conversations/{conversation_id}")
+    async def conversation_events(
+        websocket: WebSocket,
+        conversation_id: str,
+        after_seq: int = 0,
+    ) -> None:
+        ensure_catalog_schema(settings)
+        session_factory = get_session_factory()
+        with session_factory() as db:
+            _catalog_bootstrap(db, settings)
+            conversation = get_conversation_or_404(db, conversation_id)
+            if conversation.archive_dir is None:
+                await websocket.close(code=4409, reason="Conversation archive is missing.")
+                return
+        await SOCKET_MANAGER.connect(conversation_id, websocket)
+        try:
+            await websocket.send_json(session_snapshot(conversation))
+            for event in replay_events(conversation, after_seq=max(after_seq, 0)):
+                await websocket.send_json(event)
+            while True:
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            SOCKET_MANAGER.disconnect(conversation_id, websocket)
 
     return app
 

@@ -42,6 +42,18 @@ MODULE_REGISTRY: list[ModuleDescriptor] = [
         visualization_kinds=["raw-json", "segment-list"],
     ),
     ModuleDescriptor(
+        module_id="projection.fixed-window",
+        implementation_version="1.0.0",
+        state_schema_version=1,
+        protocol_family="projection-v1",
+        kind="projection",
+        config_schema={"window_size": "int"},
+        requires_capabilities=["append-only"],
+        provides_capabilities=["segment-chain", "budget-exhausted-fallback"],
+        supports_recovery=True,
+        visualization_kinds=["raw-json", "segment-list"],
+    ),
+    ModuleDescriptor(
         module_id="trigger.debounced-observation",
         implementation_version="1.0.0",
         state_schema_version=1,

@@ -65,6 +65,34 @@ TRANSCRIPT_SCHEMA = (
       updated_at TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS submissions (
+      client_message_id TEXT PRIMARY KEY,
+      request_hash TEXT NOT NULL,
+      content_markdown TEXT NOT NULL,
+      mentions_json TEXT NOT NULL,
+      primary_reply_to TEXT NULL,
+      responds_to_json TEXT NOT NULL,
+      status TEXT NOT NULL,
+      error_code TEXT NULL,
+      error_message TEXT NULL,
+      message_id TEXT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS outbox_events (
+      event_id TEXT PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      conversation_seq INTEGER NULL,
+      payload_json TEXT NOT NULL,
+      status TEXT NOT NULL,
+      dispatch_attempts INTEGER NOT NULL DEFAULT 0,
+      dispatched_at TEXT NULL,
+      created_at TEXT NOT NULL
+    )
+    """,
 )
 
 
@@ -101,6 +129,10 @@ def append_observation(path: Path, payload: dict[str, Any]) -> None:
         handle.write("\n")
 
 
+def transcript_path(root: Path) -> Path:
+    return root / "transcript.sqlite"
+
+
 def build_file_manifest(root: Path) -> list[dict[str, Any]]:
     files: list[dict[str, Any]] = []
     for relative in ("manifest.json", "observations.ndjson", "transcript.sqlite"):
@@ -120,10 +152,6 @@ def write_manifest(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
     manifest_path = root / "manifest.json"
     snapshot = dict(payload)
     snapshot["files"] = build_file_manifest(root)
-    manifest_path.write_text(
-        json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
     snapshot["files"] = build_file_manifest(root)
     manifest_path.write_text(
         json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
