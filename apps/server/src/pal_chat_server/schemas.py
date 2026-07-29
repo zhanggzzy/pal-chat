@@ -30,6 +30,17 @@ class ConversationRead(BaseModel):
     updated_at: datetime
 
 
+class ConversationListItem(BaseModel):
+    id: str
+    title: str
+    active_topic_id: str | None
+    created_at: datetime
+    updated_at: datetime
+    message_count: int
+    active_run_status: str | None
+    last_message_preview: str | None
+
+
 class RunRead(BaseModel):
     id: str
     conversation_id: str
@@ -72,6 +83,9 @@ class TopicRead(BaseModel):
     created_by_message_id: str
     created_at: datetime
     updated_at: datetime
+    message_count: int = 0
+    summary_count: int = 0
+    transition_count: int = 0
 
 
 class TopicTransitionRead(BaseModel):
@@ -135,6 +149,18 @@ class ContextSnapshotRead(BaseModel):
     created_at: datetime
 
 
+class ContextSnapshotItemRead(BaseModel):
+    id: str
+    snapshot_id: str
+    ordinal: int
+    item_type: str
+    message_id: str | None
+    summary_revision_id: str | None
+    rendered_content: str
+    estimated_tokens: int
+    inclusion_reason: str
+
+
 class ResponseDecisionRead(BaseModel):
     id: str
     run_id: str
@@ -196,6 +222,10 @@ class ConversationCreateResponse(BaseModel):
     participants: list[ParticipantRead]
 
 
+class ConversationListResponse(BaseModel):
+    items: list[ConversationListItem]
+
+
 class MessageCreateRequest(BaseModel):
     content: str = Field(min_length=1, max_length=8_000)
 
@@ -234,6 +264,7 @@ class MessageAnalysisResponse(BaseModel):
     topic_links: list[MessageTopicLinkRead]
     agent_indexes: list[AgentTopicIndexRead]
     snapshots: list[ContextSnapshotRead]
+    snapshot_items: list[ContextSnapshotItemRead]
     decisions: list[ResponseDecisionRead]
     model_calls: list[ModelCallRead]
 

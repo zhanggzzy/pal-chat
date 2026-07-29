@@ -14,6 +14,7 @@ from pal_chat_server.models import (
     AgentTopicIndex,
     ChatRun,
     ContextSnapshot,
+    ContextSnapshotItem,
     Conversation,
     Message,
     MessageTopicLink,
@@ -43,8 +44,25 @@ class MessageAnalysis:
     topic_links: list[MessageTopicLink]
     agent_indexes: list[AgentTopicIndex]
     snapshots: list[ContextSnapshot]
+    snapshot_items: list[ContextSnapshotItem]
     decisions: list[ResponseDecision]
     model_calls: list[ModelCall]
+
+
+@dataclass(slots=True)
+class ConversationSummary:
+    conversation: Conversation
+    message_count: int
+    active_run_status: str | None
+    last_message_preview: str | None
+
+
+@dataclass(slots=True)
+class TopicOverview:
+    topic: Topic
+    message_count: int
+    summary_count: int
+    transition_count: int
 
 
 def utc_now() -> datetime:
@@ -201,6 +219,39 @@ def create_conversation(session: Session, *, title: str) -> tuple[Conversation, 
 def delete_conversation(session: Session, *, conversation_id: str) -> None:
     conversation = get_conversation_or_404(session, conversation_id)
     session.delete(conversation)
+
+
+def list_conversations(session: Session) -> list[ConversationSummary]:
+    conversations = list(
+        session.scalars(select(Conversation).order_by(Conversation.updated_at.desc())).all()
+    )
+    items: list[ConversationSummary] = []
+    for conversation in conversations:
+        message_count = int(
+            session.scalar(
+                select(func.count(Message.id)).where(Message.conversation_id == conversation.id)
+            )
+            or 0
+        )
+        last_message = session.scalar(
+            select(Message)
+            .where(Message.conversation_id == conversation.id)
+            .order_by(Message.sequence_no.desc())
+            .limit(1)
+        )
+        active_run = get_active_run(session, conversation.id)
+        preview = None
+        if last_message is not None:
+            preview = last_message.content[:120]
+        items.append(
+            ConversationSummary(
+                conversation=conversation,
+                message_count=message_count,
+                active_run_status=active_run.status if active_run is not None else None,
+                last_message_preview=preview,
+            )
+        )
+    return items
 
 
 def create_message_with_run(
@@ -395,15 +446,48 @@ def list_messages(
     return list(session.scalars(stmt.order_by(Message.sequence_no.asc()).limit(limit)).all())
 
 
-def list_topics(session: Session, *, conversation_id: str) -> list[Topic]:
+def list_topics(session: Session, *, conversation_id: str) -> list[TopicOverview]:
     get_conversation_or_404(session, conversation_id)
-    return list(
+    topics = list(
         session.scalars(
             select(Topic)
             .where(Topic.conversation_id == conversation_id)
             .order_by(Topic.updated_at.desc())
-        )
+        ).all()
     )
+    items: list[TopicOverview] = []
+    for topic in topics:
+        items.append(
+            TopicOverview(
+                topic=topic,
+                message_count=int(
+                    session.scalar(
+                        select(func.count(MessageTopicLink.id)).where(
+                            MessageTopicLink.topic_id == topic.id,
+                            MessageTopicLink.kind == "primary",
+                        )
+                    )
+                    or 0
+                ),
+                summary_count=int(
+                    session.scalar(
+                        select(func.count(TopicSummaryRevision.id)).where(
+                            TopicSummaryRevision.topic_id == topic.id
+                        )
+                    )
+                    or 0
+                ),
+                transition_count=int(
+                    session.scalar(
+                        select(func.count(TopicTransition.id)).where(
+                            TopicTransition.to_topic_id == topic.id
+                        )
+                    )
+                    or 0
+                ),
+            )
+        )
+    return items
 
 
 def get_topic_detail(session: Session, *, topic_id: str) -> TopicDetail:
@@ -439,6 +523,15 @@ def get_message_analysis(session: Session, *, message_id: str) -> MessageAnalysi
             select(ContextSnapshot).where(ContextSnapshot.trigger_message_id == message.id)
         ).all()
     ]
+    snapshot_ids = [item.id for item in snapshots]
+    snapshot_items = [
+        item
+        for item in session.scalars(
+            select(ContextSnapshotItem)
+            .where(ContextSnapshotItem.snapshot_id.in_(snapshot_ids))
+            .order_by(ContextSnapshotItem.snapshot_id.asc(), ContextSnapshotItem.ordinal.asc())
+        ).all()
+    ] if snapshot_ids else []
     decisions = [
         item
         for item in session.scalars(
@@ -463,6 +556,7 @@ def get_message_analysis(session: Session, *, message_id: str) -> MessageAnalysi
         topic_links=topic_links,
         agent_indexes=agent_indexes,
         snapshots=snapshots,
+        snapshot_items=snapshot_items,
         decisions=decisions,
         model_calls=model_calls,
     )
