@@ -65,8 +65,8 @@
 
         <div class="mobile-toggle panel">
           <div class="segmented" role="tablist" aria-label="主区域切换">
-            <button id="mobile-chat-tab" type="button" class="segment active" data-pane="chat">聊天</button>
-            <button id="mobile-analysis-tab" type="button" class="segment" data-pane="analysis">分析</button>
+            <button type="button" class="segment active" data-pane="chat">聊天</button>
+            <button type="button" class="segment" data-pane="detail">详情</button>
           </div>
         </div>
 
@@ -101,22 +101,21 @@
             </form>
           </section>
 
-          <section id="analysis-pane" class="analysis-pane panel">
+          <section id="detail-pane" class="detail-pane panel">
             <div class="panel-topline">
               <div>
-                <h3>分析区</h3>
-                <p id="analysis-subtitle" class="muted">选中一条消息后查看话题、Agent、快照和调用明细。</p>
+                <h3>Agent 详情面板</h3>
+                <p id="detail-subtitle" class="muted">对齐 `spec-v2.md` 的三列结构；最终分析入口待用户确认。</p>
               </div>
             </div>
 
-            <div id="analysis-tabs" class="tab-strip" role="tablist" aria-label="分析标签">
-              <button type="button" class="tab active" data-tab="topics" role="tab" aria-selected="true">话题</button>
-              <button type="button" class="tab" data-tab="agents" role="tab" aria-selected="false">Agent</button>
-              <button type="button" class="tab" data-tab="snapshots" role="tab" aria-selected="false">快照</button>
-              <button type="button" class="tab" data-tab="calls" role="tab" aria-selected="false">调用</button>
+            <div class="detail-notice">
+              <strong>当前状态</strong>
+              <p>已切换为 Server / Agent A / Agent B 三列骨架。话题、快照、调用的最终归集入口仍待用户在 A / B 方案间确认。</p>
             </div>
 
-            <div id="analysis-content" class="analysis-content"></div>
+            <div id="detail-column-picker" class="column-picker" role="tablist" aria-label="详情列切换"></div>
+            <div id="detail-columns" class="detail-columns"></div>
           </section>
         </section>
 
