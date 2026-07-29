@@ -4,6 +4,7 @@ import asyncio
 import json
 import sqlite3
 from collections import defaultdict
+from concurrent.futures import Future
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
@@ -75,10 +76,30 @@ class ConversationSocketManager:
             current = list(self._connections.get(conversation_id, []))
         for websocket, loop in current:
             future = asyncio.run_coroutine_threadsafe(websocket.send_json(event), loop)
-            try:
-                future.result(timeout=1)
-            except Exception:
-                self.disconnect(conversation_id, websocket)
+            future.add_done_callback(
+                self._publish_done_callback(conversation_id, websocket)
+            )
+
+    def _publish_done_callback(
+        self,
+        conversation_id: str,
+        websocket: WebSocket,
+    ) -> Any:
+        def callback(future: Future[Any]) -> None:
+            self._handle_publish_result(conversation_id, websocket, future)
+
+        return callback
+
+    def _handle_publish_result(
+        self,
+        conversation_id: str,
+        websocket: WebSocket,
+        future: Any,
+    ) -> None:
+        try:
+            future.result()
+        except Exception:
+            self.disconnect(conversation_id, websocket)
 
 
 SOCKET_MANAGER = ConversationSocketManager()
@@ -292,6 +313,15 @@ def list_messages(
             SELECT *
             FROM messages
             WHERE conversation_seq > ?
+              AND (
+                sender_kind != 'agent'
+                OR EXISTS (
+                  SELECT 1
+                  FROM agent_runs
+                  WHERE agent_runs.run_id = messages.client_message_id
+                    AND agent_runs.status = 'COMMITTED'
+                )
+              )
             ORDER BY conversation_seq
             LIMIT ?
             """,

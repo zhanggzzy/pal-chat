@@ -214,6 +214,31 @@ def create_app() -> FastAPI:
             connection.commit()
         dispatch_pending_outbox(conversation)
 
+    def queue_public_event_row(
+        connection: Any,
+        *,
+        event_type: str,
+        payload: dict[str, Any],
+        conversation_seq: int | None = None,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO outbox_events(
+              event_id, event_type, conversation_seq, payload_json, status,
+              dispatch_attempts, dispatched_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                str(uuid4()),
+                event_type,
+                conversation_seq,
+                json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                "pending",
+                0,
+                None,
+            ),
+        )
+
     def internal_auth_tuple(request: Request) -> tuple[str, str, str]:
         authorization = request.headers.get("Authorization", "")
         if not authorization.startswith("Bearer "):
@@ -1307,7 +1332,7 @@ def create_app() -> FastAPI:
         with connect_transcript(conversation) as connection:
             state_row = connection.execute(
                 """
-                SELECT worker_state
+                SELECT worker_state, typing_status
                 FROM agent_runtime_state
                 WHERE agent_id = ?
                 """,
@@ -1344,6 +1369,10 @@ def create_app() -> FastAPI:
                 "idle"
                 if run_status in terminal_statuses
                 else typing_status(payload.get("typing_action"))
+            )
+            typing_state_changed = (
+                state_row is not None
+                and str(state_row["typing_status"]) != persisted_typing_status
             )
             decision_json = payload.get("decision_json")
             draft_message_json = payload.get("draft_message_json")
@@ -1451,7 +1480,23 @@ def create_app() -> FastAPI:
                         run_status,
                     ),
                 )
+            if (
+                run_id != "-"
+                and run_status in terminal_statuses
+                and typing_state_changed
+                and persisted_typing_status == "idle"
+            ):
+                queue_public_event_row(
+                    connection,
+                    event_type="agent.typing_stopped",
+                    payload={
+                        "agent_id": agent_id,
+                        "run_id": run_id,
+                        "reason": run_status.lower(),
+                    },
+                )
             connection.commit()
+        dispatch_pending_outbox(conversation)
         if state_row is None or state_row["worker_state"] != worker_state:
             enqueue_public_event(
                 conversation,
@@ -1527,31 +1572,38 @@ def create_app() -> FastAPI:
             if payload.get("action") == "start"
             else "agent.typing_stopped"
         )
+        desired_typing_status = typing_status(payload.get("action"))
         with connect_transcript(conversation) as connection:
-            connection.execute(
+            state_row = connection.execute(
                 """
-                INSERT INTO outbox_events(
-                  event_id, event_type, conversation_seq, payload_json, status,
-                  dispatch_attempts, dispatched_at, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                SELECT typing_status
+                FROM agent_runtime_state
+                WHERE agent_id = ?
                 """,
-                (
-                    str(uuid4()),
-                    event_type,
-                    None,
-                    json.dumps(
-                        {
-                            "agent_id": agent_id,
-                            "run_id": None if run_id == "-" else run_id,
-                            "reason": payload.get("reason"),
-                        },
-                        ensure_ascii=False,
-                        sort_keys=True,
-                    ),
-                    "pending",
-                    0,
-                    None,
-                ),
+                (agent_id,),
+            ).fetchone()
+            current_typing_status = (
+                "idle" if state_row is None else str(state_row["typing_status"])
+            )
+            if current_typing_status == desired_typing_status:
+                return {"ok": "true"}
+            if state_row is not None:
+                connection.execute(
+                    """
+                    UPDATE agent_runtime_state
+                    SET typing_status = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE agent_id = ?
+                    """,
+                    (desired_typing_status, agent_id),
+                )
+            queue_public_event_row(
+                connection,
+                event_type=event_type,
+                payload={
+                    "agent_id": agent_id,
+                    "run_id": None if run_id == "-" else run_id,
+                    "reason": payload.get("reason"),
+                },
             )
             connection.commit()
         dispatch_pending_outbox(conversation)

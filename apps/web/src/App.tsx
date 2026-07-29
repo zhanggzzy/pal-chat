@@ -411,8 +411,9 @@ export function App(): JSX.Element {
                 <dd>{costs?.total_tokens ?? 0}</dd>
               </div>
               <div>
-                <dt>Total Cost</dt>
+                <dt>费用估算</dt>
                 <dd>${costs?.total_cost_usd.toFixed(6) ?? "0.000000"}</dd>
+                <small>估算/解释性数据，非账单</small>
               </div>
             </dl>
             <pre className="json-fallback">{asJson(costs)}</pre>

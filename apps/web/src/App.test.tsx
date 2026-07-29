@@ -140,6 +140,10 @@ describe("App", () => {
     render(<App />);
     await waitFor(() => expect(screen.getByText("Monitoring")).toBeInTheDocument());
 
+    expect(screen.getByText("费用估算")).toBeInTheDocument();
+    expect(screen.getByText("估算/解释性数据，非账单")).toBeInTheDocument();
+    expect(screen.queryByText(/^Total Cost$/)).not.toBeInTheDocument();
+
     fireEvent.click(screen.getByText("A 私有视图"));
     await waitFor(() => expect(screen.getByText("Raw Memory JSON")).toBeInTheDocument());
 
