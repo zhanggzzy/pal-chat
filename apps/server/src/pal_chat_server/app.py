@@ -16,7 +16,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from pal_chat_server.agent_runtime import AgentRuntimeManager
+from pal_chat_server.agent_runtime import is_agent_runtime_enabled
 from pal_chat_server.config import Settings, get_settings
 from pal_chat_server.db import (
     ensure_catalog_schema,
@@ -112,7 +112,6 @@ def _catalog_bootstrap(db: Session, settings: Settings) -> None:
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    runtime_manager = AgentRuntimeManager()
     worker_supervisor = WorkerSupervisor(server_base_url=settings.server_base_url)
     app = FastAPI(
         title="pal-chat API",
@@ -131,7 +130,6 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.state.runtime_manager = runtime_manager
     app.state.worker_supervisor = worker_supervisor
 
     def conversation_profile(conversation: ConversationRecord) -> ExperimentProfile:
@@ -146,14 +144,19 @@ def create_app() -> FastAPI:
             )
         return ExperimentProfile.model_validate(source)
 
-    def get_runtime_manager() -> AgentRuntimeManager:
-        return app.state.runtime_manager  # type: ignore[no-any-return]
-
     def get_worker_supervisor() -> WorkerSupervisor:
         return app.state.worker_supervisor  # type: ignore[no-any-return]
 
     def use_process_workers(profile: ExperimentProfile) -> bool:
         return get_worker_supervisor().has_process_mode(profile)
+
+    def ensure_process_runtime_available(profile: ExperimentProfile) -> None:
+        if is_agent_runtime_enabled(profile) and not use_process_workers(profile):
+            raise AppError(
+                code="worker_runtime_unavailable",
+                status_code=409,
+                message="Agent runtime requires configured worker processes.",
+            )
 
     def publish_runtime_event(conversation_id: str, event: dict[str, Any]) -> None:
         get_worker_supervisor().publish_public_event(conversation_id, event)
@@ -243,6 +246,16 @@ def create_app() -> FastAPI:
             if worker.get("agent_id") == agent_id:
                 return int(cast(int | str, worker.get("restart_count", 0)))
         return 0
+
+    def is_terminal_run_status(status_name: str) -> bool:
+        return status_name in {
+            "BUDGET_EXHAUSTED",
+            "COMMITTED",
+            "FATAL",
+            "INVALIDATED",
+            "PAUSED",
+            "SILENT",
+        }
 
     @app.middleware("http")
     async def add_request_id(
@@ -579,16 +592,12 @@ def create_app() -> FastAPI:
         )
         record = get_conversation_or_404(db, conversation_id)
         profile = conversation_profile(record)
+        ensure_process_runtime_available(profile)
         if use_process_workers(profile):
             get_worker_supervisor().start_workers(
                 record,
                 profile=profile,
                 guardrails=record.guardrails_json,
-            )
-        else:
-            get_runtime_manager().register_conversation(
-                record,
-                profile=profile,
             )
         return conversation
 
@@ -609,10 +618,9 @@ def create_app() -> FastAPI:
         )
         record = get_conversation_or_404(db, conversation_id)
         profile = conversation_profile(record)
+        ensure_process_runtime_available(profile)
         if use_process_workers(profile):
             get_worker_supervisor().pause_workers(conversation_id)
-        else:
-            get_runtime_manager().pause_conversation(conversation_id)
         return conversation
 
     @app.post(
@@ -632,14 +640,9 @@ def create_app() -> FastAPI:
         )
         record = get_conversation_or_404(db, conversation_id)
         profile = conversation_profile(record)
+        ensure_process_runtime_available(profile)
         if use_process_workers(profile):
             get_worker_supervisor().resume_workers(conversation_id)
-        else:
-            get_runtime_manager().resume_conversation(conversation_id)
-            get_runtime_manager().register_conversation(
-                record,
-                profile=profile,
-            )
         return conversation
 
     @app.post(
@@ -659,10 +662,9 @@ def create_app() -> FastAPI:
         )
         record = get_conversation_or_404(db, conversation_id)
         profile = conversation_profile(record)
+        ensure_process_runtime_available(profile)
         if use_process_workers(profile):
             get_worker_supervisor().stop_workers(conversation_id)
-        else:
-            get_runtime_manager().unregister_conversation(conversation_id)
         return conversation
 
     @app.post(
@@ -739,6 +741,7 @@ def create_app() -> FastAPI:
             payload=MessagePayload(**payload.model_dump()),
         )
         profile = conversation_profile(conversation)
+        ensure_process_runtime_available(profile)
         if use_process_workers(profile):
             publish_runtime_event(
                 conversation.id,
@@ -750,12 +753,6 @@ def create_app() -> FastAPI:
                     "conversation_seq": message["conversation_seq"],
                     "payload": {"message": message},
                 },
-            )
-        else:
-            get_runtime_manager().ingest_message(
-                conversation,
-                profile=profile,
-                message=message,
             )
         return MessageCommitResponse(
             message=MessageRead.model_validate(message),
@@ -781,6 +778,7 @@ def create_app() -> FastAPI:
             client_message_id=client_message_id,
         )
         profile = conversation_profile(conversation)
+        ensure_process_runtime_available(profile)
         if use_process_workers(profile):
             publish_runtime_event(
                 conversation.id,
@@ -792,12 +790,6 @@ def create_app() -> FastAPI:
                     "conversation_seq": message["conversation_seq"],
                     "payload": {"message": message},
                 },
-            )
-        else:
-            get_runtime_manager().ingest_message(
-                conversation,
-                profile=profile,
-                message=message,
             )
         return MessageCommitResponse(
             message=MessageRead.model_validate(message),
@@ -1039,9 +1031,16 @@ def create_app() -> FastAPI:
             agent_id=agent_id,
             profile_hash=profile_hash,
         )
+        if payload.get("checkpoint_ack") == "paused":
+            get_worker_supervisor().record_checkpoint_ack(
+                conversation_id=conversation_id,
+                agent_id=agent_id,
+            )
         with connect_transcript(conversation) as connection:
             profile = conversation_profile(conversation)
             active_run_id = payload.get("active_run_id")
+            worker_state = str(payload.get("worker_state", "LISTENING"))
+            run_status = str(payload.get("run_status", "RUNNING"))
             connection.execute(
                 """
                 INSERT INTO agent_runtime_state(
@@ -1054,12 +1053,14 @@ def create_app() -> FastAPI:
                   reliable_seq = excluded.reliable_seq,
                   dirty_since_seq = excluded.dirty_since_seq,
                   active_run_id = excluded.active_run_id,
+                  typing_status = excluded.typing_status,
+                  restart_count = excluded.restart_count,
                   profile_hash = excluded.profile_hash,
                   updated_at = CURRENT_TIMESTAMP
                 """,
                 (
                     agent_id,
-                    str(payload.get("worker_state", "LISTENING")),
+                    worker_state,
                     payload_required_int(payload, "reliable_seq"),
                     payload_optional_int(payload, "dirty_since_seq"),
                     json.dumps([]),
@@ -1085,32 +1086,49 @@ def create_app() -> FastAPI:
                       error_code, error_message, started_at, updated_at, finished_at
                     ) VALUES (
                       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                      CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL
+                      CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                      CASE
+                        WHEN ? IN ('COMMITTED', 'INVALIDATED', 'SILENT', 'FATAL', 'PAUSED')
+                        THEN CURRENT_TIMESTAMP
+                        ELSE NULL
+                      END
                     )
                     ON CONFLICT(run_id) DO UPDATE SET
                       status = excluded.status,
                       phase = excluded.phase,
+                      expected_conversation_seq = excluded.expected_conversation_seq,
+                      causal_episode_id = excluded.causal_episode_id,
+                      caused_by_message_id = excluded.caused_by_message_id,
+                      agent_hop = excluded.agent_hop,
+                      finished_at = CASE
+                        WHEN excluded.status IN (
+                          'COMMITTED', 'INVALIDATED', 'SILENT', 'FATAL', 'PAUSED'
+                        )
+                        THEN CURRENT_TIMESTAMP
+                        ELSE agent_runs.finished_at
+                      END,
                       updated_at = CURRENT_TIMESTAMP
                     """,
                     (
                         run_id,
                         agent_id,
-                        str(payload.get("run_status", "RUNNING")),
-                        str(payload.get("worker_state", "LISTENING")),
+                        run_status,
+                        worker_state,
                         json.dumps([]),
                         json.dumps([]),
                         payload_required_int(payload, "reliable_seq"),
                         conversation.profile_hash,
                         run_id,
-                        None,
-                        None,
-                        0,
-                        None,
-                        None,
-                        None,
+                        payload.get("causal_episode_id"),
+                        payload.get("caused_by_message_id"),
+                        payload_optional_int(payload, "agent_hop") or 0,
                         None,
                         None,
                         None,
+                        None,
+                        None,
+                        None,
+                        run_status,
                     ),
                 )
             connection.commit()

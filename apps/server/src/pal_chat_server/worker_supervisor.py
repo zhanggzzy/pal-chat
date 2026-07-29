@@ -17,6 +17,7 @@ from pal_chat_server.agent_runtime import is_agent_runtime_enabled
 from pal_chat_server.errors import AppError
 from pal_chat_server.models import ConversationRecord
 from pal_chat_server.schemas import ExperimentProfile
+from pal_chat_server.sequence_runtime import connect_transcript
 
 
 def _python_path() -> str:
@@ -44,6 +45,7 @@ class WorkerProcessHandle:
     token: str
     restart_count: int = 0
     connected: threading.Event = field(default_factory=threading.Event)
+    pause_ack: threading.Event = field(default_factory=threading.Event)
     stopped: bool = False
 
 
@@ -95,6 +97,7 @@ class WorkerSupervisor:
         self._auth: dict[str, WorkerAuthContext] = {}
         self._lock = threading.Lock()
         self._monitors: dict[str, threading.Thread] = {}
+        self._stopping: set[str] = set()
 
     @property
     def enabled(self) -> bool:
@@ -120,6 +123,8 @@ class WorkerSupervisor:
                     "agent_id": agent_id,
                     "pid": handle.process.pid,
                     "connected": handle.connected.is_set(),
+                    "alive": handle.process.poll() is None,
+                    "pause_ack": handle.pause_ack.is_set(),
                     "restart_count": handle.restart_count,
                 }
                 for agent_id, handle in handles.items()
@@ -170,9 +175,22 @@ class WorkerSupervisor:
         )
 
     def pause_workers(self, conversation_id: str) -> None:
+        with self._lock:
+            handles = list(self._handles.get(conversation_id, {}).values())
+        for handle in handles:
+            handle.pause_ack.clear()
         self.publish_control(
             conversation_id,
             {"event_type": "conversation.state_changed", "state": "paused"},
+        )
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            if all(handle.pause_ack.wait(timeout=0.1) for handle in handles):
+                return
+        raise AppError(
+            code="pause_checkpoint_timeout",
+            status_code=409,
+            message="Workers failed to acknowledge pause checkpoint.",
         )
 
     def resume_workers(self, conversation_id: str) -> None:
@@ -183,9 +201,13 @@ class WorkerSupervisor:
 
     def stop_workers(self, conversation_id: str) -> None:
         with self._lock:
+            current = self._handles.get(conversation_id, {})
+            for handle in current.values():
+                handle.stopped = True
+            self._stopping.add(conversation_id)
             handles = self._handles.pop(conversation_id, {})
         for handle in handles.values():
-            handle.stopped = True
+            INTERNAL_SOCKET_MANAGER.disconnect(conversation_id, handle.agent_id)
             self._auth.pop(handle.token, None)
             if handle.process.poll() is None:
                 handle.process.terminate()
@@ -194,10 +216,15 @@ class WorkerSupervisor:
                 except subprocess.TimeoutExpired:
                     handle.process.kill()
                     handle.process.wait(timeout=5)
-        self.publish_control(
-            conversation_id,
-            {"event_type": "conversation.state_changed", "state": "ended"},
-        )
+        with self._lock:
+            self._stopping.discard(conversation_id)
+            self._monitors.pop(conversation_id, None)
+
+    def shutdown(self) -> None:
+        with self._lock:
+            conversation_ids = list(self._handles)
+        for conversation_id in conversation_ids:
+            self.stop_workers(conversation_id)
 
     def publish_public_event(self, conversation_id: str, event: dict[str, Any]) -> None:
         INTERNAL_SOCKET_MANAGER.publish(conversation_id, event)
@@ -260,6 +287,12 @@ class WorkerSupervisor:
         if handle is not None:
             handle.connected.set()
         return context
+
+    def record_checkpoint_ack(self, *, conversation_id: str, agent_id: str) -> None:
+        with self._lock:
+            handle = self._handles.get(conversation_id, {}).get(agent_id)
+        if handle is not None:
+            handle.pause_ack.set()
 
     def _spawn_worker(
         self,
@@ -329,7 +362,18 @@ class WorkerSupervisor:
                     code = handle.process.poll()
                     if code is None or handle.stopped:
                         continue
+                    handle.connected.clear()
                     self._auth.pop(handle.token, None)
+                    with self._lock:
+                        stopping = conversation.id in self._stopping
+                    if stopping:
+                        continue
+                    self._record_process_exit(
+                        conversation,
+                        agent_id=agent_id,
+                        restart_count=handle.restart_count,
+                        code=code,
+                    )
                     restart_limit = int(guardrails.get("worker_restart_limit", 1))
                     if code == 91 or handle.restart_count >= restart_limit:
                         continue
@@ -348,3 +392,73 @@ class WorkerSupervisor:
         thread = threading.Thread(target=monitor, daemon=True)
         self._monitors[conversation.id] = thread
         thread.start()
+
+    def _record_process_exit(
+        self,
+        conversation: ConversationRecord,
+        *,
+        agent_id: str,
+        restart_count: int,
+        code: int,
+    ) -> None:
+        run_status = "INVALIDATED" if code != 91 else "FATAL"
+        worker_state = "RESTARTING" if code != 91 else "ERROR"
+        error_code = f"worker_exit_{code}"
+        error_message = f"Worker process exited with code {code}."
+        with connect_transcript(conversation) as connection:
+            active_row = connection.execute(
+                """
+                SELECT active_run_id
+                FROM agent_runtime_state
+                WHERE agent_id = ?
+                """,
+                (agent_id,),
+            ).fetchone()
+            active_run_id = active_row["active_run_id"] if active_row is not None else None
+            connection.execute(
+                """
+                INSERT INTO agent_runtime_state(
+                  agent_id, worker_state, reliable_seq, dirty_since_seq,
+                  pending_message_ids_json, pending_root_message_ids_json, active_run_id,
+                  typing_status, restart_count, profile_hash, updated_at
+                )
+                SELECT
+                  agent_id, ?, reliable_seq, dirty_since_seq,
+                  pending_message_ids_json, pending_root_message_ids_json, NULL,
+                  'idle', ?, profile_hash, CURRENT_TIMESTAMP
+                FROM agent_runtime_state
+                WHERE agent_id = ?
+                ON CONFLICT(agent_id) DO UPDATE SET
+                  worker_state = excluded.worker_state,
+                  active_run_id = NULL,
+                  typing_status = excluded.typing_status,
+                  restart_count = excluded.restart_count,
+                  updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    worker_state,
+                    restart_count,
+                    agent_id,
+                ),
+            )
+            if active_run_id is not None:
+                connection.execute(
+                    """
+                    UPDATE agent_runs
+                    SET status = ?,
+                        phase = ?,
+                        error_code = ?,
+                        error_message = ?,
+                        finished_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE run_id = ?
+                    """,
+                    (
+                        run_status,
+                        worker_state,
+                        error_code,
+                        error_message,
+                        active_run_id,
+                    ),
+                )
+            connection.commit()

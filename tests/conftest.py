@@ -7,6 +7,7 @@ import time
 from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -52,7 +53,7 @@ def find_free_port() -> int:
 class LiveServer:
     base_url: str
     client: httpx.Client
-    app: object
+    app: Any
 
 
 @pytest.fixture
@@ -127,6 +128,7 @@ def live_process_server(data_dir: Path) -> Generator[LiveServer, None, None]:
             raise RuntimeError("Live test server failed to start.")
         yield LiveServer(base_url=base_url, client=client, app=app)
 
+    app.state.worker_supervisor.shutdown()
     server.should_exit = True
     thread.join(timeout=5)
     clear_test_env()

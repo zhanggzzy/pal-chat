@@ -46,6 +46,7 @@ class WorkerState:
     agent_hop: int = 0
     paused: bool = False
     typing_active: bool = False
+    pause_requested: bool = False
 
 
 def env_config() -> WorkerConfig:
@@ -247,8 +248,15 @@ def run_worker() -> None:
                 "active_run_id": run_id,
                 "run_status": status,
                 "typing_action": "start" if state.typing_active else "stop",
+                "causal_episode_id": state.causal_episode_id,
+                "caused_by_message_id": state.caused_by_message_id,
+                "agent_hop": state.agent_hop,
+                "checkpoint_ack": "paused" if state.pause_requested else None,
             },
         ).raise_for_status()
+
+    def post_worker_state(phase: str) -> None:
+        post_status("IDLE", phase, None)
 
     def set_typing(active: bool, run_id: str | None, reason: str) -> None:
         if state.typing_active == active:
@@ -262,30 +270,73 @@ def run_worker() -> None:
             json={"action": "start" if active else "stop", "reason": reason},
         ).raise_for_status()
 
-    while not stop_event.is_set():
-        while True:
+    def handle_selected_step(step: ScriptedStep) -> None:
+        if step.fail_code == "WORKER_CRASHED":
+            os._exit(90)
+        if step.fail_code == "WORKER_CRASHED_FATAL":
+            os._exit(91)
+
+    def process_runtime_event(event: dict[str, Any]) -> None:
+        event_type = event.get("event_type")
+        if event_type == "conversation.state_changed":
+            next_state = event["payload"]["state"]
+            state.paused = next_state == "paused"
+            state.pause_requested = next_state == "paused"
+            if next_state == "ended":
+                stop_event.set()
+                return
+            if next_state == "paused":
+                set_typing(False, state.active_run_id, "paused")
+                if state.active_run_id is not None:
+                    post_status("INVALIDATED", "PAUSED", state.active_run_id)
+                    state.active_run_id = None
+                post_worker_state("PAUSED")
+                state.pause_requested = False
+                return
+            if next_state == "running":
+                post_worker_state("LISTENING")
+            return
+        if event_type != "message.committed":
+            return
+        message = event["payload"]["message"]
+        if int(message["conversation_seq"]) > state.reliable_seq:
+            state.reliable_seq = int(message["conversation_seq"])
+        if should_queue(runtime_payload, state, config.agent_id, message):
+            state.pending_messages.append(message)
+            if message["sender_kind"] == "user":
+                state.pending_roots.append(message["message_id"])
+        if state.active_run_id is not None and message["sender_id"] != config.agent_id:
+            state.dirty_since_seq = int(message["conversation_seq"])
+
+    def pump_events(timeout: float) -> None:
+        deadline = time.monotonic() + timeout
+        while not stop_event.is_set():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
             try:
-                event = incoming.get(timeout=0.05)
+                event = incoming.get(timeout=min(remaining, 0.05))
             except queue.Empty:
-                break
-            event_type = event.get("event_type")
-            if event_type == "conversation.state_changed":
-                state.paused = event["payload"]["state"] == "paused"
-                if event["payload"]["state"] == "ended":
-                    stop_event.set()
-                    break
+                return
+            process_runtime_event(event)
+
+    def advance_with_pump(delay_ms: int) -> None:
+        deadline = time.monotonic() + (delay_ms / 1000)
+        while (
+            not stop_event.is_set()
+            and time.monotonic() < deadline
+            and not state.paused
+            and state.active_run_id is not None
+        ):
+            remaining = max(0.0, deadline - time.monotonic())
+            try:
+                event = incoming.get(timeout=min(remaining, 0.05))
+            except queue.Empty:
                 continue
-            if event_type != "message.committed":
-                continue
-            message = event["payload"]["message"]
-            if int(message["conversation_seq"]) > state.reliable_seq:
-                state.reliable_seq = int(message["conversation_seq"])
-            if should_queue(runtime_payload, state, config.agent_id, message):
-                state.pending_messages.append(message)
-                if message["sender_kind"] == "user":
-                    state.pending_roots.append(message["message_id"])
-            if state.active_run_id is not None and message["sender_id"] != config.agent_id:
-                state.dirty_since_seq = int(message["conversation_seq"])
+            process_runtime_event(event)
+
+    while not stop_event.is_set():
+        pump_events(0.05)
 
         if (
             stop_event.is_set()
@@ -320,16 +371,15 @@ def run_worker() -> None:
         post_status("RUNNING", "DECIDING", state.active_run_id)
         if direct_mention:
             set_typing(True, state.active_run_id, "decision")
-        selected = adapter.select_step(
+        decision_step = adapter.select_step(
             decision_request(config.agent_id, latest),
         )
-        if selected.fail_code == "WORKER_CRASHED":
-            os._exit(90)
-        if selected.fail_code == "WORKER_CRASHED_FATAL":
-            os._exit(91)
-        decision_payload = selected.output_json or json.loads(
-            selected.output_text or '{"should_reply": false}'
-        )
+        handle_selected_step(decision_step)
+        if decision_step.delay_ms > 0:
+            advance_with_pump(decision_step.delay_ms)
+        if stop_event.is_set() or state.paused or state.active_run_id is None:
+            continue
+        decision_payload = decision_step.output_json or {}
         should_reply = bool(decision_payload.get("should_reply", direct_mention or all_mention))
         if direct_mention or all_mention:
             should_reply = True
@@ -338,16 +388,18 @@ def run_worker() -> None:
             set_typing(False, state.active_run_id, "silent")
             state.active_run_id = None
             state.dirty_since_seq = None
+            post_worker_state("LISTENING")
             continue
         action_step = adapter.select_step(
             action_request(config.agent_id, decision_payload),
         )
+        handle_selected_step(action_step)
         if not direct_mention:
             set_typing(True, state.active_run_id, "action")
-        if action_step.fail_code == "WORKER_CRASHED":
-            os._exit(90)
-        if action_step.fail_code == "WORKER_CRASHED_FATAL":
-            os._exit(91)
+        if action_step.delay_ms > 0:
+            advance_with_pump(action_step.delay_ms)
+        if stop_event.is_set() or state.paused or state.active_run_id is None:
+            continue
         draft = action_step.output_json or {
             "content_markdown": action_step.output_text or "ACK",
             "mentions": [],
@@ -360,16 +412,22 @@ def run_worker() -> None:
             content=str(draft["content_markdown"]),
         )
         if wait_ms > 0:
-            time.sleep(wait_ms / 1000)
+            advance_with_pump(wait_ms)
         if (
+            stop_event.is_set()
+            or state.paused
+            or state.active_run_id is None
+            or (
             state.dirty_since_seq is not None
             and state.dirty_since_seq > (state.expected_conversation_seq or 0)
             and not all_mention
+            )
         ):
             post_status("INVALIDATED", "RECONSIDER_BEFORE_SEND", state.active_run_id)
             set_typing(False, state.active_run_id, "invalidated")
             state.active_run_id = None
             state.current_draft = None
+            post_worker_state("LISTENING")
             continue
         while True:
             response = client.post(
@@ -388,24 +446,41 @@ def run_worker() -> None:
                     "agent_hop": state.agent_hop,
                 },
             )
-            if (
-                response.status_code == 409
-                and response.json()["error"]["code"] == "stale_sequence"
-                and all_mention
-            ):
-                details = response.json()["error"]["details"]
-                state.expected_conversation_seq = int(
-                    details["actual_conversation_seq"]
-                )
-                continue
+            if response.status_code == 409:
+                error = response.json()["error"]
+                if error["code"] == "stale_sequence" and all_mention:
+                    details = error["details"]
+                    state.expected_conversation_seq = int(
+                        details["actual_conversation_seq"]
+                    )
+                    continue
+                if error["code"] == "stale_sequence":
+                    post_status("INVALIDATED", "RECONSIDER_BEFORE_SEND", state.active_run_id)
+                    set_typing(False, state.active_run_id, "stale-sequence")
+                    state.active_run_id = None
+                    state.current_draft = None
+                    post_worker_state("LISTENING")
+                    break
+                if error["code"] == "budget_exhausted":
+                    post_status("BUDGET_EXHAUSTED", "SUBMITTING", state.active_run_id)
+                    set_typing(False, state.active_run_id, "budget-exhausted")
+                    state.active_run_id = None
+                    post_worker_state("LISTENING")
+                    break
             response.raise_for_status()
             break
+        if state.active_run_id is None:
+            state.expected_conversation_seq = None
+            state.dirty_since_seq = None
+            state.pending_roots.clear()
+            continue
         post_status("COMMITTED", "SUBMITTING", state.active_run_id)
         set_typing(False, state.active_run_id, "submitted")
         state.active_run_id = None
         state.expected_conversation_seq = None
         state.dirty_since_seq = None
         state.pending_roots.clear()
+        post_worker_state("LISTENING")
 
     set_typing(False, state.active_run_id, "shutdown")
     ws.close()

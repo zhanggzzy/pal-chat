@@ -272,6 +272,9 @@ def build_message_record(row: sqlite3.Row, connection: sqlite3.Connection) -> di
         "primary_reply_to": row["primary_reply_to"],
         "responds_to": responds_to,
         "client_message_id": row["client_message_id"],
+        "causal_episode_id": row["causal_episode_id"],
+        "caused_by_message_id": row["caused_by_message_id"],
+        "agent_hop": int(row["agent_hop"]),
         "committed_at": row["committed_at"],
         "cp_revision": int(row["cp_revision"]),
     }
@@ -767,6 +770,9 @@ def commit_message(
                         "primary_reply_to": payload.primary_reply_to,
                         "responds_to": payload.responds_to,
                         "client_message_id": payload.client_message_id,
+                        "causal_episode_id": payload.causal_episode_id,
+                        "caused_by_message_id": payload.caused_by_message_id,
+                        "agent_hop": payload.agent_hop,
                         "committed_at": now,
                         "cp_revision": next_revision,
                     }

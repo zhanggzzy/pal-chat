@@ -266,6 +266,9 @@ class MessageRead(BaseModel):
     primary_reply_to: str | None
     responds_to: list[str] = Field(default_factory=list)
     client_message_id: str | None
+    causal_episode_id: str | None = None
+    caused_by_message_id: str | None = None
+    agent_hop: int = 0
     committed_at: datetime
     cp_revision: int
 
