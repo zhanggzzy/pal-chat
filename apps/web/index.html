@@ -3,133 +3,101 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>pal-chat</title>
+    <title>pal-chat phase 1 bootstrap</title>
     <script type="module" src="/src/main.js"></script>
   </head>
   <body>
-    <div class="shell">
-      <aside class="sidebar panel">
-        <div class="sidebar-header">
-          <div>
-            <p class="kicker">pal-chat</p>
-            <h1>群聊实验台</h1>
-          </div>
-          <button id="create-conversation" type="button" class="ghost-button">新会话</button>
-        </div>
+    <div class="page-shell">
+      <header class="hero">
+        <p class="eyebrow">pal-chat / phase 1</p>
+        <h1>实验骨架与 bootstrap 控台</h1>
+        <p class="hero-copy">
+          当前页面只负责冻结后的阶段 1 基线：模块注册、Profile/Guardrail、catalog/manifest、
+          凭据摘要与可复现启动命令。
+        </p>
+      </header>
 
-        <label class="field compact">
-          <span>API Base</span>
-          <input id="api-base" type="url" value="http://127.0.0.1:8000" />
-        </label>
-
-        <div class="toolbar-row">
-          <button id="refresh-health" type="button">检查服务</button>
-          <span id="health-badge" class="pill pending">连接中</span>
-        </div>
-
-        <dl class="health-grid">
-          <div>
-            <dt>Live</dt>
-            <dd id="live-status">-</dd>
-          </div>
-          <div>
-            <dt>Ready</dt>
-            <dd id="ready-status">-</dd>
-          </div>
-          <div>
-            <dt>Schema</dt>
-            <dd id="schema-status">-</dd>
-          </div>
-        </dl>
-
-        <section class="session-list-wrap">
-          <div class="section-heading">
-            <h2>会话</h2>
-            <button id="refresh-conversations" type="button" class="text-button">刷新</button>
-          </div>
-          <div id="conversation-list" class="session-list" aria-live="polite"></div>
-        </section>
-      </aside>
-
-      <main class="workspace">
-        <header class="workspace-header panel">
-          <div class="workspace-title">
-            <p class="kicker">当前会话</p>
-            <h2 id="conversation-title">未选择会话</h2>
-            <p id="conversation-meta" class="muted">创建新会话后开始群聊实验。</p>
-          </div>
-          <div class="workspace-actions">
-            <button id="delete-conversation" type="button" class="danger-button">删除会话</button>
-          </div>
-        </header>
-
-        <div class="mobile-toggle panel">
-          <div class="segmented" role="tablist" aria-label="主区域切换">
-            <button type="button" class="segment active" data-pane="chat">聊天</button>
-            <button type="button" class="segment" data-pane="detail">详情</button>
-          </div>
-        </div>
-
-        <section class="workspace-body">
-          <section id="chat-pane" class="chat-pane panel">
-            <div class="panel-topline">
-              <div>
-                <h3>聊天区</h3>
-                <p id="chat-subtitle" class="muted">发送一条消息，观察两个 Agent 如何参与对话。</p>
-              </div>
-              <button id="jump-to-latest" type="button" class="text-button hidden">新消息</button>
+      <main class="grid">
+        <section class="panel panel-accent">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Endpoint</p>
+              <h2>Bootstrap</h2>
             </div>
-
-            <div id="connection-banner" class="banner hidden" role="status"></div>
-            <div id="message-list" class="message-list" role="log" aria-live="polite" aria-label="聊天消息"></div>
-
-            <form id="composer" class="composer">
-              <label class="composer-field">
-                <span class="sr-only">消息输入</span>
-                <textarea
-                  id="message-input"
-                  rows="2"
-                  maxlength="8000"
-                  placeholder="输入消息，Enter 发送，Shift+Enter 换行"
-                  aria-label="消息输入"
-                ></textarea>
-              </label>
-              <div class="composer-actions">
-                <p id="composer-hint" class="muted">空消息不可发送。</p>
-                <button id="send-message" type="submit">发送</button>
-              </div>
-            </form>
-          </section>
-
-          <section id="detail-pane" class="detail-pane panel">
-            <div class="panel-topline">
-              <div>
-                <h3>Agent 详情面板</h3>
-                <p id="detail-subtitle" class="muted">对齐 `spec-v2.md` 的三列结构；最终分析入口待用户确认。</p>
-              </div>
+            <button id="refresh" type="button">刷新</button>
+          </div>
+          <label class="field">
+            <span>API Base</span>
+            <input id="api-base" type="url" value="http://127.0.0.1:8000" />
+          </label>
+          <div class="status-row">
+            <span id="status-pill" class="pill pill-pending">等待连接</span>
+            <span id="generated-at" class="muted">-</span>
+          </div>
+          <dl class="meta-grid">
+            <div>
+              <dt>App</dt>
+              <dd id="app-version">-</dd>
             </div>
-
-            <div class="detail-notice">
-              <strong>当前状态</strong>
-              <p>已切换为 Server / Agent A / Agent B 三列骨架。话题、快照、调用的最终归集入口仍待用户在 A / B 方案间确认。</p>
+            <div>
+              <dt>Bind Host</dt>
+              <dd id="bind-host">-</dd>
             </div>
-
-            <div id="detail-column-picker" class="column-picker" role="tablist" aria-label="详情列切换"></div>
-            <div id="detail-columns" class="detail-columns"></div>
-          </section>
+            <div>
+              <dt>模板数</dt>
+              <dd id="template-count">0</dd>
+            </div>
+            <div>
+              <dt>凭据摘要</dt>
+              <dd id="credential-count">0</dd>
+            </div>
+          </dl>
+          <div id="note" class="notice hidden"></div>
+          <div class="command-stack">
+            <pre id="dev-command"></pre>
+            <pre id="build-command"></pre>
+          </div>
         </section>
 
-        <footer class="status-bar panel" role="status" aria-live="polite">
-          <div class="status-item">
-            <span class="dot" id="run-dot"></span>
-            <span id="run-status">空闲</span>
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">State Machine</p>
+              <h2>生命周期</h2>
+            </div>
           </div>
-          <div class="status-item">消息：<strong id="message-count">0</strong></div>
-          <div class="status-item">Agent：<strong id="agent-count">0</strong></div>
-          <div class="status-item">轮次：<strong id="round-count">0 / 0</strong></div>
-          <div class="status-item">Token：<strong id="token-count">0 / 0</strong></div>
-          <button id="stop-run" type="button" class="danger-button hidden" aria-label="停止自动接力">停止</button>
-        </footer>
+          <div id="transitions" class="chip-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Modules</p>
+              <h2>静态注册表</h2>
+            </div>
+          </div>
+          <div id="modules" class="card-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Templates</p>
+              <h2>Profile 模板</h2>
+            </div>
+          </div>
+          <div id="templates" class="card-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Credentials</p>
+              <h2>凭据摘要</h2>
+            </div>
+          </div>
+          <div id="credentials" class="card-list"></div>
+        </section>
       </main>
     </div>
   </body>

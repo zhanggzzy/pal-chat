@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 from sqlite3 import Connection as SQLiteConnection
 
 from sqlalchemy import create_engine, event
@@ -9,6 +10,7 @@ from sqlalchemy.engine.url import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from pal_chat_server.config import Settings, get_settings
+from pal_chat_server.models import Base
 
 _ENGINE: Engine | None = None
 _SESSION_FACTORY: sessionmaker[Session] | None = None
@@ -65,6 +67,28 @@ def get_engine(settings: Settings | None = None) -> Engine:
     return engine
 
 
+def stamp_ready_revision(engine: Engine, revision: str) -> None:
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(32) NOT NULL)"
+        )
+        count = connection.exec_driver_sql("SELECT COUNT(*) FROM alembic_version").scalar_one()
+        if count == 0:
+            connection.exec_driver_sql(
+                "INSERT INTO alembic_version(version_num) VALUES (?)",
+                (revision,),
+            )
+        else:
+            connection.exec_driver_sql("UPDATE alembic_version SET version_num = ?", (revision,))
+
+
+def ensure_catalog_schema(settings: Settings | None = None) -> None:
+    config = settings or get_settings()
+    engine = get_engine(config)
+    Base.metadata.create_all(bind=engine)
+    stamp_ready_revision(engine, config.ready_schema_revision)
+
+
 def get_session_factory() -> sessionmaker[Session]:
     global _SESSION_FACTORY
     if _SESSION_FACTORY is None:
@@ -74,11 +98,19 @@ def get_session_factory() -> sessionmaker[Session]:
 
 
 def get_db_session() -> Iterator[Session]:
+    ensure_catalog_schema(get_settings())
     session = get_session_factory()()
     try:
         yield session
     finally:
         session.close()
+
+
+def catalog_path(settings: Settings | None = None) -> Path:
+    config = settings or get_settings()
+    url = make_url(config.resolved_database_url)
+    assert url.database is not None
+    return Path(url.database)
 
 
 def reset_db_state() -> None:

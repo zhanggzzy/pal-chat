@@ -16,10 +16,11 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 
 
 def configure_test_env(data_dir: Path) -> Path:
-    db_path = data_dir / "pal-chat.db"
+    db_path = data_dir / "catalog.sqlite"
     data_dir.mkdir(parents=True, exist_ok=True)
     os.environ["PAL_CHAT_DATA_DIR"] = str(data_dir)
     os.environ["PAL_CHAT_DATABASE_URL"] = f"sqlite:///{db_path}"
+    os.environ["PAL_CHAT_CREDENTIAL_BACKEND"] = "memory"
     get_settings.cache_clear()
     reset_db_state()
     return db_path
@@ -28,6 +29,7 @@ def configure_test_env(data_dir: Path) -> Path:
 def clear_test_env() -> None:
     os.environ.pop("PAL_CHAT_DATA_DIR", None)
     os.environ.pop("PAL_CHAT_DATABASE_URL", None)
+    os.environ.pop("PAL_CHAT_CREDENTIAL_BACKEND", None)
     get_settings.cache_clear()
     reset_db_state()
 

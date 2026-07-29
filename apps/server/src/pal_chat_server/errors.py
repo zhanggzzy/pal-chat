@@ -36,9 +36,10 @@ def build_error_response(
             "error": {
                 "code": code,
                 "message": message,
-                "request_id": request_id,
+                "retryable": False,
                 "details": details or {},
-            }
+            },
+            "request_id": request_id,
         },
     )
 
@@ -51,4 +52,3 @@ async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
         message=exc.message,
         details=exc.details,
     )
-
