@@ -5,6 +5,7 @@ from pal_chat_server.db import get_engine
 from pal_chat_server.models import (
     AgentTopicIndex,
     ContextSnapshot,
+    ContextSnapshotItem,
     Conversation,
     Message,
     MessageTopicLink,
@@ -48,6 +49,24 @@ def test_create_conversation_and_send_message(migrated_app: TestClient) -> None:
     )
     assert repeat.status_code == 202
     assert repeat.json() == payload
+
+
+def test_list_conversations_returns_recent_summaries(migrated_app: TestClient) -> None:
+    first_id = create_conversation(migrated_app)
+    second_id = create_conversation(migrated_app)
+    migrated_app.post(
+        f"/api/v1/conversations/{second_id}/messages",
+        headers={"Idempotency-Key": "msg-1"},
+        json={"content": "Latest preview"},
+    )
+
+    response = migrated_app.get("/api/v1/conversations")
+    assert response.status_code == 200
+    payload = response.json()["items"]
+    assert [item["id"] for item in payload] == [second_id, first_id]
+    assert payload[0]["message_count"] == 1
+    assert payload[0]["active_run_status"] == "queued"
+    assert payload[0]["last_message_preview"] == "Latest preview"
 
 
 def test_send_message_while_run_in_progress_returns_conflict(migrated_app: TestClient) -> None:
@@ -204,6 +223,20 @@ def test_topic_and_analysis_queries_serialize_typed_records(migrated_app: TestCl
             created_at=now,
         )
         session.add(snapshot)
+        session.flush()
+
+        snapshot_item = ContextSnapshotItem(
+            id="snapshot-item-1",
+            snapshot_id=snapshot.id,
+            ordinal=1,
+            item_type="message",
+            message_id=message.id,
+            summary_revision_id=None,
+            rendered_content="Analyze me",
+            estimated_tokens=4,
+            inclusion_reason="trigger_message",
+        )
+        session.add(snapshot_item)
 
         decision = ResponseDecision(
             id="decision-1",
@@ -263,5 +296,11 @@ def test_topic_and_analysis_queries_serialize_typed_records(migrated_app: TestCl
     analysis = migrated_app.get(f"/api/v1/messages/{created['message_id']}/analysis")
     assert analysis.status_code == 200
     assert analysis.json()["topic_links"][0]["kind"] == "primary"
+    assert analysis.json()["snapshot_items"][0]["item_type"] == "message"
     assert analysis.json()["decisions"][0]["outcome"] == "selected"
     assert analysis.json()["model_calls"][0]["provider"] == "fake"
+
+    topics = migrated_app.get(f"/api/v1/conversations/{conversation_id}/topics")
+    assert topics.status_code == 200
+    assert topics.json()["items"][0]["message_count"] == 1
+    assert topics.json()["items"][0]["summary_count"] == 1

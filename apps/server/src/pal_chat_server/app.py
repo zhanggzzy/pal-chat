@@ -20,10 +20,13 @@ from pal_chat_server.errors import AppError, build_error_response
 from pal_chat_server.models import ChatRun, Conversation, Participant, RunEvent, Topic
 from pal_chat_server.schemas import (
     AgentTopicIndexRead,
+    ContextSnapshotItemRead,
     ContextSnapshotRead,
     ConversationCreateRequest,
     ConversationCreateResponse,
     ConversationDetailResponse,
+    ConversationListItem,
+    ConversationListResponse,
     ConversationRead,
     ErrorEnvelope,
     HealthResponse,
@@ -55,6 +58,7 @@ from pal_chat_server.services import (
     get_message_analysis,
     get_run_or_404,
     get_topic_detail,
+    list_conversations,
     list_events,
     list_messages,
     list_timeline,
@@ -83,6 +87,20 @@ def to_topic_read(item: Topic) -> TopicRead:
     return TopicRead.model_validate(item, from_attributes=True)
 
 
+def to_topic_list_read(
+    item: object,
+    *,
+    message_count: int,
+    summary_count: int,
+    transition_count: int,
+) -> TopicRead:
+    payload = TopicRead.model_validate(item, from_attributes=True).model_dump()
+    payload["message_count"] = message_count
+    payload["summary_count"] = summary_count
+    payload["transition_count"] = transition_count
+    return TopicRead.model_validate(payload)
+
+
 def to_topic_transition_read(item: object) -> TopicTransitionRead:
     return TopicTransitionRead.model_validate(item, from_attributes=True)
 
@@ -101,6 +119,10 @@ def to_agent_topic_index_read(item: object) -> AgentTopicIndexRead:
 
 def to_context_snapshot_read(item: object) -> ContextSnapshotRead:
     return ContextSnapshotRead.model_validate(item, from_attributes=True)
+
+
+def to_context_snapshot_item_read(item: object) -> ContextSnapshotItemRead:
+    return ContextSnapshotItemRead.model_validate(item, from_attributes=True)
 
 
 def to_response_decision_read(item: object) -> ResponseDecisionRead:
@@ -235,6 +257,29 @@ def create_app() -> FastAPI:
             participants=[to_participant_read(item) for item in participants],
         )
 
+    @app.get(
+        "/api/v1/conversations",
+        response_model=ConversationListResponse,
+        tags=["conversations"],
+    )
+    def get_conversations(db: Session = Depends(get_db_session)) -> ConversationListResponse:
+        items = list_conversations(db)
+        return ConversationListResponse(
+            items=[
+                ConversationListItem(
+                    id=item.conversation.id,
+                    title=item.conversation.title,
+                    active_topic_id=item.conversation.active_topic_id,
+                    created_at=item.conversation.created_at,
+                    updated_at=item.conversation.updated_at,
+                    message_count=item.message_count,
+                    active_run_status=item.active_run_status,
+                    last_message_preview=item.last_message_preview,
+                )
+                for item in items
+            ]
+        )
+
     @app.delete(
         "/api/v1/conversations/{conversation_id}",
         status_code=status.HTTP_204_NO_CONTENT,
@@ -320,7 +365,17 @@ def create_app() -> FastAPI:
         db: Session = Depends(get_db_session),
     ) -> TopicListResponse:
         items = list_topics(db, conversation_id=conversation_id)
-        return TopicListResponse(items=[to_topic_read(item) for item in items])
+        return TopicListResponse(
+            items=[
+                to_topic_list_read(
+                    item.topic,
+                    message_count=item.message_count,
+                    summary_count=item.summary_count,
+                    transition_count=item.transition_count,
+                )
+                for item in items
+            ]
+        )
 
     @app.get("/api/v1/topics/{topic_id}", response_model=TopicDetailResponse, tags=["topics"])
     def get_topic(topic_id: str, db: Session = Depends(get_db_session)) -> TopicDetailResponse:
@@ -346,6 +401,9 @@ def create_app() -> FastAPI:
             topic_links=[to_message_topic_link_read(item) for item in analysis.topic_links],
             agent_indexes=[to_agent_topic_index_read(item) for item in analysis.agent_indexes],
             snapshots=[to_context_snapshot_read(item) for item in analysis.snapshots],
+            snapshot_items=[
+                to_context_snapshot_item_read(item) for item in analysis.snapshot_items
+            ],
             decisions=[to_response_decision_read(item) for item in analysis.decisions],
             model_calls=[to_model_call_read(item) for item in analysis.model_calls],
         )
