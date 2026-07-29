@@ -47,6 +47,7 @@ class WorkerState:
     paused: bool = False
     typing_active: bool = False
     pause_requested: bool = False
+    episode_root_message_ids: dict[str, str] = field(default_factory=dict)
 
 
 def env_config() -> WorkerConfig:
@@ -189,7 +190,26 @@ def should_queue(
         return False
     if message["sender_kind"] == "user":
         return not mentions or agent_id in mentions or all_mention
-    return agent_id in mentions
+    if agent_id not in mentions:
+        return False
+    if is_root_stage_peer_handoff(state, message):
+        relay_owner = sorted(str(item) for item in payload["all_agent_ids"])[0]
+        return agent_id == relay_owner
+    return True
+
+
+def is_root_stage_peer_handoff(
+    state: WorkerState,
+    message: dict[str, Any],
+) -> bool:
+    episode_id = str(message.get("causal_episode_id") or "")
+    root_message_id = state.episode_root_message_ids.get(episode_id)
+    return bool(
+        episode_id
+        and root_message_id
+        and str(message.get("caused_by_message_id") or "") == root_message_id
+        and int(message.get("agent_hop") or 0) == 0
+    )
 
 
 def run_worker() -> None:
@@ -348,6 +368,22 @@ def run_worker() -> None:
 
         current_batch = list(state.pending_messages)
         state.pending_messages.clear()
+        if state.pending_roots:
+            root_ids = set(state.pending_roots)
+            root_message = next(
+                (message for message in current_batch if message["message_id"] in root_ids),
+                None,
+            )
+            if root_message is not None:
+                deferred_messages = [
+                    message
+                    for message in current_batch
+                    if message["message_id"] != root_message["message_id"]
+                ]
+                if deferred_messages:
+                    state.pending_messages = deferred_messages + state.pending_messages
+                current_batch = [root_message]
+                state.pending_roots = [str(root_message["message_id"])]
         current_ids = {str(msg["message_id"]) for msg in current_batch}
         state.pending_roots = [
             item for item in state.pending_roots if item in current_ids
@@ -359,12 +395,20 @@ def run_worker() -> None:
         state.current_all_mention = all_mention
         state.current_direct_mention = direct_mention
         state.active_run_id = f"run-{secrets.token_hex(10)}"
-        state.expected_conversation_seq = int(latest["conversation_seq"])
+        latest_seq = int(latest["conversation_seq"])
+        if is_root_stage_peer_handoff(state, latest):
+            state.expected_conversation_seq = max(state.reliable_seq, latest_seq)
+        else:
+            state.expected_conversation_seq = latest_seq
         state.caused_by_message_id = latest["message_id"]
         if state.pending_roots:
             root_digest = sha1("|".join(state.pending_roots).encode("utf-8")).hexdigest()
             state.causal_episode_id = f"episode-{root_digest[:16]}"
             state.agent_hop = 0
+            if state.caused_by_message_id is not None:
+                state.episode_root_message_ids[state.causal_episode_id] = (
+                    state.caused_by_message_id
+                )
         else:
             state.causal_episode_id = latest.get("causal_episode_id")
             state.agent_hop = int(latest.get("agent_hop") or 0) + 1
@@ -482,6 +526,9 @@ def run_worker() -> None:
         state.pending_roots.clear()
         post_worker_state("LISTENING")
 
+    if state.active_run_id is not None:
+        post_status("INVALIDATED", "SHUTDOWN", state.active_run_id)
+        state.active_run_id = None
     set_typing(False, state.active_run_id, "shutdown")
     ws.close()
 

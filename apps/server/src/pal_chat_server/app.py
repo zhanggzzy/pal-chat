@@ -1041,6 +1041,24 @@ def create_app() -> FastAPI:
             active_run_id = payload.get("active_run_id")
             worker_state = str(payload.get("worker_state", "LISTENING"))
             run_status = str(payload.get("run_status", "RUNNING"))
+            terminal_statuses = {
+                "BUDGET_EXHAUSTED",
+                "COMMITTED",
+                "FATAL",
+                "INVALIDATED",
+                "PAUSED",
+                "SILENT",
+            }
+            persisted_active_run_id = (
+                None
+                if run_status in terminal_statuses or active_run_id in (None, "-")
+                else str(active_run_id)
+            )
+            persisted_typing_status = (
+                "idle"
+                if run_status in terminal_statuses
+                else typing_status(payload.get("typing_action"))
+            )
             connection.execute(
                 """
                 INSERT INTO agent_runtime_state(
@@ -1065,8 +1083,8 @@ def create_app() -> FastAPI:
                     payload_optional_int(payload, "dirty_since_seq"),
                     json.dumps([]),
                     json.dumps([]),
-                    None if active_run_id in (None, "-") else str(active_run_id),
-                    typing_status(payload.get("typing_action")),
+                    persisted_active_run_id,
+                    persisted_typing_status,
                     restart_count_for(
                         conversation,
                         profile=profile,
@@ -1088,7 +1106,10 @@ def create_app() -> FastAPI:
                       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
                       CASE
-                        WHEN ? IN ('COMMITTED', 'INVALIDATED', 'SILENT', 'FATAL', 'PAUSED')
+                        WHEN ? IN (
+                          'BUDGET_EXHAUSTED', 'COMMITTED', 'INVALIDATED',
+                          'SILENT', 'FATAL', 'PAUSED'
+                        )
                         THEN CURRENT_TIMESTAMP
                         ELSE NULL
                       END
@@ -1102,7 +1123,8 @@ def create_app() -> FastAPI:
                       agent_hop = excluded.agent_hop,
                       finished_at = CASE
                         WHEN excluded.status IN (
-                          'COMMITTED', 'INVALIDATED', 'SILENT', 'FATAL', 'PAUSED'
+                          'BUDGET_EXHAUSTED', 'COMMITTED', 'INVALIDATED',
+                          'SILENT', 'FATAL', 'PAUSED'
                         )
                         THEN CURRENT_TIMESTAMP
                         ELSE agent_runs.finished_at

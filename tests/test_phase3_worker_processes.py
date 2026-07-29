@@ -171,6 +171,18 @@ def run_statuses(conversation_id: str) -> list[str]:
     ]
 
 
+def agent_runs(conversation_id: str) -> list[sqlite3.Row]:
+    return fetch_rows(
+        conversation_id,
+        """
+        SELECT agent_id, status, phase, causal_episode_id, caused_by_message_id,
+               agent_hop, finished_at
+        FROM agent_runs
+        ORDER BY started_at, agent_id
+        """,
+    )
+
+
 def typing_events(conversation_id: str) -> list[str]:
     return [
         row["event_type"]
@@ -449,6 +461,12 @@ def test_h07_live_episode_budget_stops_after_four_two_two(
         mentions=["agent-a", "agent-b"],
     )
     wait_until(lambda: len(agent_messages(live_process_server.client, conversation_id)) == 4)
+    wait_until(
+        lambda: [row["status"] for row in agent_runs(conversation_id)].count("COMMITTED") == 4
+        and [row["status"] for row in agent_runs(conversation_id)].count("BUDGET_EXHAUSTED")
+        == 1
+        and all(row["finished_at"] is not None for row in agent_runs(conversation_id))
+    )
 
     messages = agent_messages(live_process_server.client, conversation_id)
     assert {item["content_markdown"] for item in messages} == {
@@ -457,6 +475,7 @@ def test_h07_live_episode_budget_stops_after_four_two_two(
         "A 接力 2",
         "B 接力 2",
     }
+    assert "A 不应再发" not in {item["content_markdown"] for item in messages}
     budget_rows = fetch_rows(
         conversation_id,
         """
@@ -475,6 +494,17 @@ def test_h07_live_episode_budget_stops_after_four_two_two(
         for message in messages
     )
     assert sorted(message["agent_hop"] for message in messages) == [0, 0, 1, 2]
+    runs = [dict(row) for row in agent_runs(conversation_id)]
+    exhausted = [row for row in runs if row["status"] == "BUDGET_EXHAUSTED"]
+    assert len(exhausted) == 1
+    assert exhausted[0]["agent_id"] == "agent-a"
+    assert exhausted[0]["agent_hop"] == 3
+    assert exhausted[0]["causal_episode_id"] == messages[0]["causal_episode_id"]
+    message_count = fetch_rows(
+        conversation_id,
+        "SELECT COUNT(*) AS count FROM messages",
+    )[0]["count"]
+    assert message_count == 5
 
 
 def test_pause_checkpoint_ack_clears_running_trace(live_process_server: LiveServer) -> None:
