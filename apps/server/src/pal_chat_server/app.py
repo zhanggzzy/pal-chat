@@ -87,7 +87,13 @@ def to_topic_read(item: Topic) -> TopicRead:
     return TopicRead.model_validate(item, from_attributes=True)
 
 
-def to_topic_list_read(item: object, *, message_count: int, summary_count: int, transition_count: int) -> TopicRead:
+def to_topic_list_read(
+    item: object,
+    *,
+    message_count: int,
+    summary_count: int,
+    transition_count: int,
+) -> TopicRead:
     payload = TopicRead.model_validate(item, from_attributes=True).model_dump()
     payload["message_count"] = message_count
     payload["summary_count"] = summary_count
