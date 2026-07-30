@@ -100,7 +100,13 @@ def _end_conversation(server: LiveServer, conversation_id: str) -> None:
 def _set_sensitive_metadata(server: LiveServer, conversation_id: str) -> None:
     patched = server.client.patch(
         f"/api/v1/conversations/{conversation_id}/catalog-metadata",
-        json={"metadata": {"api_token": "secret-123", "viewer_note": "phase6"}},
+        json={
+            "metadata": {
+                "api_token": "secret-123",
+                "viewer_note": "phase6",
+                "max_total_tokens": 250000,
+            }
+        },
     )
     assert patched.status_code == 200
 
@@ -198,6 +204,7 @@ def test_h14_history_index_and_raw_fallback_stay_read_only(
         "model.legacy-unknown"
     )
     assert payload["raw_manifest"]["catalog_metadata"]["api_token"] == "[REDACTED]"
+    assert payload["raw_manifest"]["catalog_metadata"]["max_total_tokens"] == 250000
     assert len(payload["messages"]) == 2
     assert payload["messages"][1]["content_markdown"] == "A 已完成阶段 6 响应"
     assert payload["cp_revisions"][-1]["projection_revision"] >= 1
@@ -337,6 +344,7 @@ def test_h15_analysis_export_zip_is_versioned_redacted_and_downloadable(
             json.loads(archive.read("manifest/raw.json").decode("utf-8")),
         )
         assert raw_manifest["catalog_metadata"]["api_token"] == "[REDACTED]"
+        assert raw_manifest["catalog_metadata"]["max_total_tokens"] == 250000
         history_payload = cast(
             dict[str, Any],
             json.loads(archive.read("public/history.json").decode("utf-8")),

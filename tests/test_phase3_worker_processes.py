@@ -282,6 +282,55 @@ def test_h03_live_direct_mention_obligates_single_agent(
     wait_until(lambda: run_statuses(conversation_id) == ["COMMITTED"])
 
 
+def test_h04_live_non_target_agent_may_stay_silent(
+    live_process_server: LiveServer,
+) -> None:
+    conversation_id = configure_runtime(
+        live_process_server,
+        script=[
+            {
+                "purpose": "decision",
+                "agent_id": "agent-a",
+                "output_json": {"should_reply": True, "reason_codes": ["direct_mention"]},
+            },
+            {
+                "purpose": "action",
+                "agent_id": "agent-a",
+                "output_json": {
+                    "content_markdown": "A 按点名回复",
+                    "mentions": [],
+                    "primary_reply_to": None,
+                    "responds_to": [],
+                },
+            },
+        ],
+    )
+    submit_user_message(
+        live_process_server.client,
+        conversation_id,
+        client_message_id="h04-user",
+        content_markdown="@A 只需要你回答",
+        mentions=["agent-a"],
+    )
+    wait_until(
+        lambda: [
+            item["content_markdown"]
+            for item in agent_messages(live_process_server.client, conversation_id)
+        ]
+        == ["A 按点名回复"]
+    )
+    wait_until(lambda: run_statuses(conversation_id) == ["COMMITTED"])
+
+    messages = live_process_server.client.get(
+        f"/api/v1/conversations/{conversation_id}/messages"
+    )
+    assert messages.status_code == 200
+    items = cast(list[dict[str, Any]], messages.json()["items"])
+    assert [item["sender_id"] for item in items] == ["user", "agent-a"]
+    assert all(item["sender_id"] != "agent-b" for item in items)
+    assert [row["agent_id"] for row in agent_runs(conversation_id)] == ["agent-a"]
+
+
 def test_h05_live_all_mention_keeps_both_agent_obligations(
     live_process_server: LiveServer,
 ) -> None:
@@ -659,6 +708,102 @@ def test_pause_checkpoint_ack_clears_running_trace(live_process_server: LiveServ
         }
         == {"LISTENING"}
     )
+
+
+def test_h08_pause_blocks_new_public_messages_and_worker_restart(
+    live_process_server: LiveServer,
+) -> None:
+    conversation_id = configure_runtime(
+        live_process_server,
+        script=[
+            {
+                "purpose": "decision",
+                "agent_id": "agent-a",
+                "delay_ms": 200,
+                "output_json": {"should_reply": True},
+            },
+            {
+                "purpose": "action",
+                "agent_id": "agent-a",
+                "output_json": {
+                    "content_markdown": "暂停后不应发出",
+                    "mentions": [],
+                    "primary_reply_to": None,
+                    "responds_to": [],
+                },
+            },
+        ],
+    )
+    submit_user_message(
+        live_process_server.client,
+        conversation_id,
+        client_message_id="h08-user-1",
+        content_markdown="@A 先开始",
+        mentions=["agent-a"],
+    )
+    wait_until(lambda: run_statuses(conversation_id) == ["RUNNING"])
+    paused = live_process_server.client.post(f"/api/v1/conversations/{conversation_id}/pause")
+    assert paused.status_code == 200
+    wait_until(lambda: run_statuses(conversation_id) == ["INVALIDATED"])
+    wait_until(
+        lambda: {
+            row["worker_state"]
+            for row in fetch_rows(
+                conversation_id,
+                "SELECT worker_state FROM agent_runtime_state",
+            )
+        }
+        == {"PAUSED"}
+    )
+    rejected = live_process_server.client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        json={
+            "client_message_id": "h08-user-2",
+            "content_markdown": "@A 暂停期间",
+            "mentions": ["agent-a"],
+            "responds_to": [],
+            "primary_reply_to": None,
+        },
+    )
+    assert rejected.status_code == 409
+    assert rejected.json()["error"]["code"] == "conversation_not_running"
+    assert agent_messages(live_process_server.client, conversation_id) == []
+    assert [row["status"] for row in agent_runs(conversation_id)] == ["INVALIDATED"]
+
+
+def test_h09_running_conversation_rejects_profile_edits(
+    live_process_server: LiveServer,
+) -> None:
+    profile = default_profile_payload(live_process_server.client)
+    created = live_process_server.client.post(
+        "/api/v1/conversations",
+        json={"title": "Phase 7 H09", "draft_profile": profile},
+    )
+    assert created.status_code == 201
+    conversation_id = cast(str, created.json()["id"])
+    assert live_process_server.client.post(
+        f"/api/v1/conversations/{conversation_id}/validate"
+    ).status_code == 200
+    started = live_process_server.client.post(f"/api/v1/conversations/{conversation_id}/start")
+    assert started.status_code == 200
+    detail_before = live_process_server.client.get(f"/api/v1/conversations/{conversation_id}")
+    assert detail_before.status_code == 200
+    original_hash = cast(str, detail_before.json()["conversation"]["profile_hash"])
+
+    mutated_profile = default_profile_payload(live_process_server.client)
+    mutated_profile["agent_a"]["persona_prompt"] = "不应写入的新 persona"
+    patched = live_process_server.client.put(
+        f"/api/v1/conversations/{conversation_id}/draft-profile",
+        json={"draft_profile": mutated_profile},
+    )
+    assert patched.status_code == 409
+    assert patched.json()["error"]["code"] == "profile_locked"
+
+    detail_after = live_process_server.client.get(f"/api/v1/conversations/{conversation_id}")
+    assert detail_after.status_code == 200
+    conversation = cast(dict[str, Any], detail_after.json()["conversation"])
+    assert conversation["profile_hash"] == original_hash
+    assert conversation["locked_profile"]["agent_a"]["persona_prompt"] != "不应写入的新 persona"
 
 
 def test_real_worker_auth_isolation_revocation_and_path_escape(

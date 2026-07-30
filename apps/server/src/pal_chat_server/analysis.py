@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import stat
 import threading
@@ -109,9 +110,33 @@ def _latency_ms(started_at: str | None, finished_at: str | None) -> int | None:
     return max(int((end - start).total_seconds() * 1000), 0)
 
 
+_SENSITIVE_EXACT_KEYS = {
+    "api_key",
+    "api_token",
+    "authorization",
+    "password",
+    "secret",
+    "token",
+}
+_SENSITIVE_PREFIXES = {"access", "api", "auth", "bearer", "id", "refresh", "session"}
+
+
 def _sanitize_key(key: str) -> bool:
-    lowered = key.lower()
-    return any(marker in lowered for marker in ("secret", "token", "password", "authorization"))
+    normalized = re.sub(r"[^a-z0-9]+", "_", key.lower()).strip("_")
+    if not normalized:
+        return False
+    if normalized in _SENSITIVE_EXACT_KEYS:
+        return True
+    parts = [part for part in normalized.split("_") if part]
+    if not parts:
+        return False
+    if parts[-1] in {"secret", "password", "authorization"}:
+        return True
+    if parts[-1] == "token":
+        return len(parts) == 1 or parts[-2] in _SENSITIVE_PREFIXES
+    if parts[-1] == "key":
+        return len(parts) >= 2 and parts[-2] in {"api", "secret"}
+    return False
 
 
 def redact_payload(value: Any, *, parent_key: str | None = None) -> Any:
