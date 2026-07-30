@@ -33,23 +33,45 @@ This repository now includes the phase 1 experiment skeleton under `apps/server`
 
 ## Local setup
 
-### One-command debug startup
+### Stage 7 reproducible runtime
 
-Run:
+Version locks:
+
+- Python `3.12` via `.python-version`
+- Node `22` via `.nvmrc`
+
+Preferred stage-7 entry points:
+
+```bash
+./scripts/bootstrap.sh
+./scripts/start.sh
+./scripts/health.sh
+./scripts/stop.sh
+```
+
+PowerShell equivalents are also shipped:
+
+- `./scripts/bootstrap.ps1`
+- `./scripts/start.ps1`
+- `./scripts/health.ps1`
+- `./scripts/stop.ps1`
+
+The stage-7 scripts use a fresh runtime root at `var/runtime-data/current`.
+Older local roots such as `var/data` or `${XDG_DATA_HOME:-~/.local/share}/pal-chat`
+are kept for inspection/rollback only; this repo does not migrate old data.
+
+### Legacy debug startup
+
+The older debug helper remains available for local fallback only:
 
 ```bash
 ./scripts/dev.sh
 ```
 
-The script will:
+It still uses the older `var/data` convention and should not be treated as the
+primary stage-7 cutover path.
 
-- create `.env` from `.env.example` when missing;
-- install backend (`uv`) and frontend (`npm`) dependencies;
-- run Alembic migrations;
-- start the backend at `http://127.0.0.1:8000`;
-- start the frontend debug console at `http://127.0.0.1:5173`.
-
-Useful local entry points:
+Useful local entry points after `./scripts/start.sh`:
 
 - Frontend debug console: `http://127.0.0.1:5173`
 - Backend live health: `http://127.0.0.1:8000/health/live`
@@ -96,8 +118,8 @@ uv sync --group dev
 npm --prefix apps/web install
 ```
 
-2. Copy `.env.example` to `.env` and set values if needed. By default the app
-   uses a local SQLite database under `${XDG_DATA_HOME:-~/.local/share}/pal-chat`.
+2. Copy `.env.example` to `.env` and set values if needed. The stage-7 scripts
+   default to `var/runtime-data/current`; older local roots stay read-only.
 
 3. Run migrations:
 
@@ -125,3 +147,8 @@ npm --prefix apps/web install
    uv run pytest
    npm --prefix apps/web run build
    ```
+
+## Cutover and rollback
+
+- Runtime root/cutover guide: [docs/cutover-and-rollback.md](docs/cutover-and-rollback.md)
+- Gate baseline and remaining stage-7 gaps: [docs/stage7-gate-matrix.md](docs/stage7-gate-matrix.md)
