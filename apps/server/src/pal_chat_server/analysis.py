@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import stat
 import threading
 import zipfile
 from datetime import UTC, datetime
@@ -13,7 +14,9 @@ from pal_chat_server.archive import scan_manifests
 from pal_chat_server.config import Settings
 from pal_chat_server.errors import AppError
 from pal_chat_server.models import ConversationRecord
+from pal_chat_server.monitoring import attempts_for_run
 from pal_chat_server.registry import MODULE_REGISTRY
+from pal_chat_server.schemas import ExperimentProfile
 from pal_chat_server.sequence_runtime import utc_now
 
 AUTOMATIC_METRICS_FILENAME = "automatic-metrics.v1.json"
@@ -352,6 +355,7 @@ def compute_automatic_metrics(conversation: ConversationRecord) -> dict[str, Any
     root = _require_archive_root(conversation)
     messages = _public_messages(root)
     runs = _run_rows(root)
+    run_rows = _transcript_rows(root, "SELECT * FROM agent_runs ORDER BY rowid")
     cp_revisions = _cp_revisions(root)
     logs = _logs(root)
     message_count = len(messages)
@@ -359,17 +363,19 @@ def compute_automatic_metrics(conversation: ConversationRecord) -> dict[str, Any
     user_messages = [item for item in messages if item["sender_kind"] == "user"]
     committed_runs = [item for item in runs if item["status"] == "COMMITTED"]
     invalidated_runs = [item for item in runs if item["status"] == "INVALIDATED"]
+    profile = ExperimentProfile.model_validate(
+        conversation.locked_profile_json or conversation.draft_profile_json
+    )
     token_total = 0
     cost_total = 0.0
     latency_values: list[int] = []
-    for run in runs:
+    for run_row, run in zip(run_rows, runs, strict=True):
         latency = run["latency_ms"]
         if latency is not None:
             latency_values.append(int(latency))
-        for trace in (run["decision_json"], run["draft_message_json"]):
-            if isinstance(trace, dict):
-                tokens = int(trace.get("estimated_tokens") or 0)
-                token_total += tokens
+        for attempt in attempts_for_run(run_row, profile=profile):
+            token_total += int(attempt["total_tokens"])
+            cost_total = round(cost_total + float(attempt["cost_usd"]), 6)
     payload = {
         "schema_version": 1,
         "conversation_id": conversation.id,
@@ -613,17 +619,47 @@ def create_analysis_export_job(
 
 def analysis_export_download_path(conversation: ConversationRecord, job_id: str) -> Path:
     job = get_analysis_export_job(conversation, job_id)
-    if job["status"] != "ready" or not job.get("download_path"):
+    if job["status"] != "ready":
         raise AppError(
             code="analysis_export_not_ready",
             status_code=409,
             message="Analysis export is not ready.",
         )
-    path = Path(str(job["download_path"]))
+    root = _require_archive_root(conversation)
+    exports_root = _exports_dir(root).resolve()
+    path = (exports_root / f"analysis-{job_id}.zip").resolve()
+    expected_name = f"analysis-{job_id}.zip"
+    try:
+        path.relative_to(exports_root)
+    except ValueError as exc:
+        raise AppError(
+            code="analysis_export_invalid_path",
+            status_code=409,
+            message="Analysis export path is invalid.",
+        ) from exc
+    if path.name != expected_name or path.suffix != ".zip":
+        raise AppError(
+            code="analysis_export_invalid_path",
+            status_code=409,
+            message="Analysis export path is invalid.",
+        )
     if not path.exists():
         raise AppError(
             code="analysis_export_missing",
             status_code=404,
             message="Analysis export file is missing.",
+        )
+    if path.is_symlink():
+        raise AppError(
+            code="analysis_export_invalid_file",
+            status_code=409,
+            message="Analysis export file is invalid.",
+        )
+    file_stat = path.stat()
+    if not stat.S_ISREG(file_stat.st_mode) or not zipfile.is_zipfile(path):
+        raise AppError(
+            code="analysis_export_invalid_file",
+            status_code=409,
+            message="Analysis export file is invalid.",
         )
     return path

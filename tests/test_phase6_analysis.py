@@ -7,52 +7,89 @@ from pathlib import Path
 from typing import Any, cast
 
 from conftest import LiveServer
-from test_phase3_worker_processes import agent_messages, submit_user_message, wait_until
+from test_phase3_worker_processes import (
+    agent_messages,
+    default_profile_payload,
+    submit_user_message,
+    wait_until,
+)
 from test_phase4_memory_context import archive_root, configure_phase4_runtime
 
 
 def _phase6_conversation(server: LiveServer) -> str:
     return configure_phase4_runtime(
         server,
-        script=[
-            {
-                "purpose": "decision",
-                "agent_id": "agent-a",
-                "match_contains": "@A 阶段 6",
-                "output_json": {
-                    "should_reply": True,
-                    "reply_key": "phase6",
-                    "memory_delta": {
-                        "operations": [
-                            {
-                                "op": "upsert_node",
-                                "node": {
-                                    "memory_node_id": "phase6-node",
-                                    "type": "Belief",
-                                    "content": "阶段 6 记忆",
-                                    "confidence": 0.7,
-                                    "salience": 0.8,
-                                    "status": "open",
-                                    "source_refs": ["phase6-user"],
-                                },
-                            }
-                        ]
-                    },
-                },
-            },
-            {
-                "purpose": "action",
-                "agent_id": "agent-a",
-                "match_contains": "\"reply_key\": \"phase6\"",
-                "output_json": {
-                    "content_markdown": "A 已完成阶段 6 响应",
-                    "mentions": [],
-                    "primary_reply_to": None,
-                    "responds_to": [],
-                },
-            },
-        ],
+        script=_phase6_script(),
     )
+
+
+def _phase6_script() -> list[dict[str, Any]]:
+    return [
+        {
+            "purpose": "decision",
+            "agent_id": "agent-a",
+            "match_contains": "@A 阶段 6",
+            "output_json": {
+                "should_reply": True,
+                "reply_key": "phase6",
+                "memory_delta": {
+                    "operations": [
+                        {
+                            "op": "upsert_node",
+                            "node": {
+                                "memory_node_id": "phase6-node",
+                                "type": "Belief",
+                                "content": "阶段 6 记忆",
+                                "confidence": 0.7,
+                                "salience": 0.8,
+                                "status": "open",
+                                "source_refs": ["phase6-user"],
+                            },
+                        }
+                    ]
+                },
+            },
+        },
+        {
+            "purpose": "action",
+            "agent_id": "agent-a",
+            "match_contains": "\"reply_key\": \"phase6\"",
+            "output_json": {
+                "content_markdown": "A 已完成阶段 6 响应",
+                "mentions": [],
+                "primary_reply_to": None,
+                "responds_to": [],
+            },
+        },
+    ]
+
+
+def _phase6_costed_conversation(server: LiveServer) -> str:
+    profile = default_profile_payload(server.client)
+    profile["metadata"]["phase"] = 4
+    profile["metadata"]["agent_runtime_enabled"] = True
+    profile["modules"]["model_adapter"] = {
+        "module_id": "model.scripted",
+        "config": {"script": _phase6_script()},
+    }
+    profile["modules"]["memory"] = {"module_id": "memory.graph-overlay", "config": {}}
+    profile["modules"]["context_assembly"] = {
+        "module_id": "context.simple",
+        "config": {},
+    }
+    profile["agent_a"]["model"]["provider"] = "openai"
+    profile["agent_a"]["model"]["model"] = "gpt-4o-mini"
+    created = server.client.post(
+        "/api/v1/conversations",
+        json={"title": "Phase 6 Costed Runtime", "draft_profile": profile},
+    )
+    assert created.status_code == 201
+    conversation_id = cast(str, created.json()["id"])
+    validate = server.client.post(f"/api/v1/conversations/{conversation_id}/validate")
+    assert validate.status_code == 200
+    started = server.client.post(f"/api/v1/conversations/{conversation_id}/start")
+    assert started.status_code == 200
+    return conversation_id
 
 
 def _end_conversation(server: LiveServer, conversation_id: str) -> None:
@@ -66,6 +103,19 @@ def _set_sensitive_metadata(server: LiveServer, conversation_id: str) -> None:
         json={"metadata": {"api_token": "secret-123", "viewer_note": "phase6"}},
     )
     assert patched.status_code == 200
+
+
+def _manual_score_path(server: LiveServer, conversation_id: str) -> Path:
+    return archive_root(server, conversation_id) / "analysis" / "manual-score.v1.json"
+
+
+def _job_json_path(server: LiveServer, conversation_id: str, job_id: str) -> Path:
+    return (
+        archive_root(server, conversation_id)
+        / "exports"
+        / "analysis-jobs"
+        / f"{job_id}.json"
+    )
 
 
 def test_h14_history_index_and_raw_fallback_stay_read_only(
@@ -88,6 +138,22 @@ def test_h14_history_index_and_raw_fallback_stay_read_only(
     metric_payload = cast(dict[str, Any], metrics.json())
     assert metric_payload["metrics"]["message_count"] == 2
     assert metric_payload["metrics"]["committed_run_count"] == 1
+    assert metric_payload["metrics"]["total_attempt_tokens"] > 0
+    assert metric_payload["metrics"]["total_cost_usd"] == 0.0
+
+    manual_score_path = _manual_score_path(live_process_server, conversation_id)
+    assert not manual_score_path.exists()
+    for score in (0, 99):
+        rejected = live_process_server.client.put(
+            f"/api/v1/conversations/{conversation_id}/manual-score",
+            json={
+                "rubric_version": "manual-score-v1",
+                "scores": [{"criterion": "clarity", "score": score, "note": "invalid"}],
+                "overall_note": "should fail",
+            },
+        )
+        assert rejected.status_code == 422
+        assert not manual_score_path.exists()
 
     manual = live_process_server.client.put(
         f"/api/v1/conversations/{conversation_id}/manual-score",
@@ -142,6 +208,36 @@ def test_h14_history_index_and_raw_fallback_stay_read_only(
     assert after_detail.json()["conversation"]["status"] == "ended"
 
 
+def test_phase6_automatic_metrics_accumulate_attempt_costs(
+    live_process_server: LiveServer,
+) -> None:
+    conversation_id = _phase6_costed_conversation(live_process_server)
+    submit_user_message(
+        live_process_server.client,
+        conversation_id,
+        client_message_id="phase6-cost-user",
+        content_markdown="@A 阶段 6",
+        mentions=["agent-a"],
+    )
+    wait_until(lambda: len(agent_messages(live_process_server.client, conversation_id)) == 1)
+
+    metrics = live_process_server.client.get(
+        f"/api/v1/conversations/{conversation_id}/metrics/automatic"
+    )
+    assert metrics.status_code == 200
+    metric_payload = cast(dict[str, Any], metrics.json())
+
+    costs = live_process_server.client.get(
+        f"/api/v1/conversations/{conversation_id}/metrics/cost-breakdown"
+    )
+    assert costs.status_code == 200
+    cost_payload = cast(dict[str, Any], costs.json())
+
+    assert metric_payload["metrics"]["total_attempt_tokens"] == cost_payload["total_tokens"]
+    assert metric_payload["metrics"]["total_cost_usd"] == cost_payload["total_cost_usd"]
+    assert metric_payload["metrics"]["total_cost_usd"] > 0
+
+
 def test_h15_analysis_export_zip_is_versioned_redacted_and_downloadable(
     live_process_server: LiveServer,
 ) -> None:
@@ -192,6 +288,24 @@ def test_h15_analysis_export_zip_is_versioned_redacted_and_downloadable(
         / f"analysis-{job_id}.zip"
     )
     assert export_path.exists()
+    expected_zip_bytes = export_path.read_bytes()
+    job_json_path = _job_json_path(live_process_server, conversation_id, job_id)
+    job_payload = cast(dict[str, Any], json.loads(job_json_path.read_text(encoding="utf-8")))
+    for tampered_path in (
+        "manifest.json",
+        "../manifest.json",
+        str(archive_root(live_process_server, conversation_id) / "manifest.json"),
+        str(job_json_path),
+    ):
+        job_payload["download_path"] = tampered_path
+        job_json_path.write_text(
+            json.dumps(job_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        tampered = live_process_server.client.get(cast(str, ready_payload["download_url"]))
+        assert tampered.status_code == 200
+        assert tampered.content == expected_zip_bytes
+        assert tampered.content[:1] != b"{"
 
     with zipfile.ZipFile(export_path) as archive:
         names = sorted(archive.namelist())
@@ -228,6 +342,10 @@ def test_h15_analysis_export_zip_is_versioned_redacted_and_downloadable(
             json.loads(archive.read("public/history.json").decode("utf-8")),
         )
         assert history_payload["conversation"]["status"] == "ended"
+
+    export_path.write_text("{not-a-zip}\n", encoding="utf-8")
+    invalid_download = live_process_server.client.get(cast(str, ready_payload["download_url"]))
+    assert invalid_download.status_code == 409
 
     after_detail = live_process_server.client.get(f"/api/v1/conversations/{conversation_id}")
     assert after_detail.status_code == 200

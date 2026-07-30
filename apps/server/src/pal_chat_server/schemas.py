@@ -523,7 +523,7 @@ class ManualScoreItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     criterion: str
-    score: float | None = None
+    score: float | None = Field(default=None, ge=1, le=5)
     note: str = ""
 
 
