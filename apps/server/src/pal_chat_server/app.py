@@ -1391,6 +1391,7 @@ def create_app() -> FastAPI:
                 "latest_cp_revision": latest_cp_revision,
                 "cp_snapshot": cp_snapshot,
                 "profile": profile.model_dump(mode="json"),
+                "guardrails": conversation.guardrails_json,
                 "worker_restart_limit": conversation.guardrails_json["worker_restart_limit"],
                 "state_dir": str(Path(conversation.archive_dir or ".") / "module-state" / agent_id),
             }

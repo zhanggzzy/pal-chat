@@ -155,6 +155,11 @@ def timing_wait_ms(payload: dict[str, Any], *, direct_mention: bool, content: st
     return max(minimum_typing_ms, wait_ms) if direct_mention else max(0, wait_ms)
 
 
+def guardrails_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
+    value = payload.get("guardrails", {})
+    return dict(value) if isinstance(value, dict) else {}
+
+
 def decision_request(agent_id: str, message: dict[str, Any]) -> ModelRequest:
     return ModelRequest(
         purpose="decision",
@@ -362,6 +367,7 @@ def run_worker() -> None:
         bundle: dict[str, Any],
         memory_revision_before: str,
         staged_memory_revision: str | None,
+        run_guardrails: dict[str, Any],
         memory_revision_after: str | None = None,
         should_reply: bool | None = None,
         payload: dict[str, Any] | None = None,
@@ -377,6 +383,7 @@ def run_worker() -> None:
             "selected_public_refs": bundle["selected_public_refs"],
             "selected_private_refs": bundle["selected_private_refs"],
             "estimated_tokens": bundle["estimated_tokens"],
+            "guardrails_snapshot": run_guardrails,
         }
         if memory_revision_after is not None:
             trace["memory_revision_after"] = memory_revision_after
@@ -500,6 +507,7 @@ def run_worker() -> None:
             state.agent_hop = int(latest.get("agent_hop") or 0) + 1
 
         runtime_payload = fetch_runtime_snapshot(client, config)
+        run_guardrails = guardrails_snapshot(runtime_payload)
         current_memory = runtime_store.snapshot()
         recent_messages = fetch_recent_messages(
             client,
@@ -525,6 +533,7 @@ def run_worker() -> None:
                     bundle=decision_bundle,
                     memory_revision_before=current_memory["revision"],
                     staged_memory_revision=None,
+                    run_guardrails=run_guardrails,
                 )
             },
         )
@@ -554,6 +563,7 @@ def run_worker() -> None:
             staged_memory_revision=(
                 None if decision_stage is None else str(decision_stage["revision"])
             ),
+            run_guardrails=run_guardrails,
             should_reply=should_reply,
             payload=decision_payload,
         )
@@ -608,6 +618,7 @@ def run_worker() -> None:
             staged_memory_revision=(
                 None if staged_combined is None else str(staged_combined["revision"])
             ),
+            run_guardrails=run_guardrails,
             payload={
                 key: value for key, value in draft.items() if key != "memory_delta"
             },

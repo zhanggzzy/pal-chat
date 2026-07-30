@@ -177,7 +177,7 @@ def agent_runs(conversation_id: str) -> list[sqlite3.Row]:
         conversation_id,
         """
         SELECT run_id, agent_id, status, phase, causal_episode_id, caused_by_message_id,
-               agent_hop, finished_at
+               agent_hop, decision_json, draft_message_json, finished_at
         FROM agent_runs
         ORDER BY started_at, agent_id
         """,
@@ -804,6 +804,111 @@ def test_h09_running_conversation_rejects_profile_edits(
     conversation = cast(dict[str, Any], detail_after.json()["conversation"])
     assert conversation["profile_hash"] == original_hash
     assert conversation["locked_profile"]["agent_a"]["persona_prompt"] != "不应写入的新 persona"
+
+
+def test_h10_guardrails_reload_only_at_next_run_checkpoint(
+    live_process_server: LiveServer,
+) -> None:
+    conversation_id = configure_runtime(
+        live_process_server,
+        script=[
+            {
+                "purpose": "decision",
+                "agent_id": "agent-a",
+                "call_index": 1,
+                "delay_ms": 200,
+                "output_json": {"should_reply": True},
+            },
+            {
+                "purpose": "action",
+                "agent_id": "agent-a",
+                "call_index": 2,
+                "output_json": {
+                    "content_markdown": "第一次按旧 guardrails",
+                    "mentions": [],
+                    "primary_reply_to": None,
+                    "responds_to": [],
+                },
+            },
+            {
+                "purpose": "decision",
+                "agent_id": "agent-a",
+                "call_index": 3,
+                "output_json": {"should_reply": True},
+            },
+            {
+                "purpose": "action",
+                "agent_id": "agent-a",
+                "call_index": 4,
+                "output_json": {
+                    "content_markdown": "第二次按新 guardrails",
+                    "mentions": [],
+                    "primary_reply_to": None,
+                    "responds_to": [],
+                },
+            },
+        ],
+    )
+    detail_before = live_process_server.client.get(f"/api/v1/conversations/{conversation_id}")
+    assert detail_before.status_code == 200
+    conversation_before = cast(dict[str, Any], detail_before.json()["conversation"])
+    original_hash = cast(str, conversation_before["profile_hash"])
+
+    submit_user_message(
+        live_process_server.client,
+        conversation_id,
+        client_message_id="h10-user-1",
+        content_markdown="@A 第一次",
+        mentions=["agent-a"],
+    )
+    wait_until(lambda: run_statuses(conversation_id) == ["RUNNING"])
+    patched = live_process_server.client.patch(
+        f"/api/v1/conversations/{conversation_id}/guardrails",
+        json={"log_level": "debug", "max_llm_calls": 7},
+    )
+    assert patched.status_code == 200
+    wait_until(
+        lambda: [
+            item["content_markdown"]
+            for item in agent_messages(live_process_server.client, conversation_id)
+        ]
+        == ["第一次按旧 guardrails"]
+    )
+    wait_until(lambda: [row["status"] for row in agent_runs(conversation_id)] == ["COMMITTED"])
+
+    submit_user_message(
+        live_process_server.client,
+        conversation_id,
+        client_message_id="h10-user-2",
+        content_markdown="@A 第二次",
+        mentions=["agent-a"],
+    )
+    wait_until(
+        lambda: [
+            item["content_markdown"]
+            for item in agent_messages(live_process_server.client, conversation_id)
+        ]
+        == ["第一次按旧 guardrails", "第二次按新 guardrails"]
+    )
+    wait_until(
+        lambda: [row["status"] for row in agent_runs(conversation_id)] == ["COMMITTED", "COMMITTED"]
+    )
+
+    runs = [dict(row) for row in agent_runs(conversation_id)]
+    first_decision = json.loads(cast(str, runs[0]["decision_json"]))
+    second_decision = json.loads(cast(str, runs[1]["decision_json"]))
+    assert first_decision["guardrails_snapshot"]["log_level"] == "info"
+    assert first_decision["guardrails_snapshot"]["max_llm_calls"] == 32
+    assert second_decision["guardrails_snapshot"]["log_level"] == "debug"
+    assert second_decision["guardrails_snapshot"]["max_llm_calls"] == 7
+
+    detail_after = live_process_server.client.get(f"/api/v1/conversations/{conversation_id}")
+    assert detail_after.status_code == 200
+    conversation_after = cast(dict[str, Any], detail_after.json()["conversation"])
+    assert conversation_after["guardrails"]["log_level"] == "debug"
+    assert conversation_after["guardrails"]["max_llm_calls"] == 7
+    assert conversation_after["profile_hash"] == original_hash
+    assert conversation_after["locked_profile"] == conversation_before["locked_profile"]
 
 
 def test_real_worker_auth_isolation_revocation_and_path_escape(
