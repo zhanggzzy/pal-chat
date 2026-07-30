@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 from hashlib import sha1
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlencode, urlparse
 
 import httpx
@@ -49,6 +49,20 @@ class WorkerState:
     typing_active: bool = False
     pause_requested: bool = False
     episode_root_message_ids: dict[str, str] = field(default_factory=dict)
+
+
+class PhaseExecutionError(Exception):
+    def __init__(self, *, error_code: str, error_message: str) -> None:
+        super().__init__(error_message)
+        self.error_code = error_code
+        self.error_message = error_message
+
+
+class AttemptBudgetRejectedError(Exception):
+    def __init__(self, *, error_code: str, error_message: str) -> None:
+        super().__init__(error_message)
+        self.error_code = error_code
+        self.error_message = error_message
 
 
 def env_config() -> WorkerConfig:
@@ -178,6 +192,44 @@ def action_request(agent_id: str, decision_payload: dict[str, Any]) -> ModelRequ
         ],
         metadata={"agent_id": agent_id},
     )
+
+
+def serialized_output(step: ScriptedStep) -> str:
+    if step.output_json is not None:
+        return json.dumps(step.output_json, ensure_ascii=False, sort_keys=True)
+    return step.output_text
+
+
+def classify_failure(
+    fail_code: str,
+    *,
+    retry_index: int,
+) -> tuple[str, str, bool, int]:
+    if fail_code == "TIMEOUT":
+        schedule = [100, 200]
+        return (
+            "timeout",
+            "Model request timed out.",
+            retry_index < len(schedule),
+            schedule[retry_index] if retry_index < len(schedule) else 0,
+        )
+    if fail_code == "HTTP_429":
+        schedule = [200, 400]
+        return (
+            "http_429",
+            "Model provider returned HTTP 429.",
+            retry_index < len(schedule),
+            schedule[retry_index] if retry_index < len(schedule) else 0,
+        )
+    if fail_code.startswith("HTTP_5") or fail_code == "RETRYABLE_5XX":
+        schedule = [150, 300]
+        return (
+            "http_5xx",
+            "Model provider returned a retryable 5xx error.",
+            retry_index < len(schedule),
+            schedule[retry_index] if retry_index < len(schedule) else 0,
+        )
+    return ("non_retryable", f"Model request failed: {fail_code}", False, 0)
 
 
 def fetch_runtime_snapshot(client: httpx.Client, config: WorkerConfig) -> dict[str, Any]:
@@ -356,6 +408,69 @@ def run_worker() -> None:
             json={"action": "start" if active else "stop", "reason": reason},
         ).raise_for_status()
 
+    def register_attempt(
+        *,
+        run_id: str,
+        phase: str,
+        bundle_revision: str,
+        memory_revision_before: str,
+        staged_memory_revision: str | None,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        response = client.post(
+            f"{config.server_base_url}/internal/v1/conversations/"
+            f"{config.conversation_id}/agent-runs/{run_id}/attempts/register",
+            headers=auth_headers(config),
+            json={
+                "phase": phase,
+                "bundle_revision": bundle_revision,
+                "memory_revision_before": memory_revision_before,
+                "staged_memory_revision": staged_memory_revision,
+                "payload": payload or {},
+            },
+        )
+        response.raise_for_status()
+        registered = response.json()
+        return registered if isinstance(registered, dict) else {}
+
+    def finalize_attempt(
+        run_id: str,
+        attempt_id: str,
+        *,
+        status: str,
+        payload: dict[str, Any] | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+        error_class: str | None = None,
+        retryable: bool = False,
+        backoff_ms: int = 0,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        total_tokens: int = 0,
+        cost_usd: float | None = None,
+        memory_revision_after: str | None = None,
+    ) -> None:
+        response = client.post(
+            f"{config.server_base_url}/internal/v1/conversations/"
+            f"{config.conversation_id}/agent-runs/{run_id}/attempts/{attempt_id}/finalize",
+            headers=auth_headers(config),
+            json={
+                "status": status,
+                "payload": payload,
+                "error_code": error_code,
+                "error_message": error_message,
+                "error_class": error_class,
+                "retryable": retryable,
+                "backoff_ms": backoff_ms,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "cost_usd": cost_usd,
+                "memory_revision_after": memory_revision_after,
+            },
+        )
+        response.raise_for_status()
+
     def handle_selected_step(step: ScriptedStep) -> None:
         if step.fail_code == "WORKER_CRASHED":
             os._exit(90)
@@ -392,6 +507,105 @@ def run_worker() -> None:
         if payload is not None:
             trace["payload"] = payload
         return trace
+
+    def run_model_phase(
+        *,
+        phase: str,
+        request: ModelRequest,
+        bundle_revision: str,
+        memory_revision_before: str,
+        staged_memory_revision: str | None,
+        fallback_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        retry_index = 0
+        haystack = "\n".join(message["content"] for message in request.messages)
+        while True:
+            assert state.active_run_id is not None
+            run_id = str(state.active_run_id)
+            registered = register_attempt(
+                run_id=run_id,
+                phase=phase,
+                bundle_revision=bundle_revision,
+                memory_revision_before=memory_revision_before,
+                staged_memory_revision=staged_memory_revision,
+                payload={"purpose": request.purpose, "retry_index": retry_index},
+            )
+            attempt_id = str(registered["attempt_id"])
+            if not bool(registered.get("admitted", False)):
+                error = cast(dict[str, Any], registered.get("error") or {})
+                raise AttemptBudgetRejectedError(
+                    error_code=str(error.get("code", "budget_exhausted")),
+                    error_message=str(
+                        error.get("message", "Conversation LLM budget exhausted.")
+                    ),
+                )
+            step = adapter.select_step(request)
+            handle_selected_step(step)
+            if step.delay_ms > 0:
+                advance_with_pump(step.delay_ms)
+            if stop_event.is_set() or state.paused or state.active_run_id is None:
+                finalize_attempt(
+                    run_id,
+                    attempt_id,
+                    status="cancelled",
+                    error_code="interrupted",
+                    error_message="Attempt interrupted before completion.",
+                    error_class="interrupted",
+                    prompt_tokens=len(haystack),
+                    completion_tokens=0,
+                    total_tokens=len(haystack),
+                )
+                raise PhaseExecutionError(
+                    error_code="interrupted",
+                    error_message="Attempt interrupted before completion.",
+                )
+            if step.fail_code is not None:
+                error_class, error_message, retryable, backoff_ms = classify_failure(
+                    step.fail_code,
+                    retry_index=retry_index,
+                )
+                finalize_attempt(
+                    run_id,
+                    attempt_id,
+                    status="failed",
+                    payload={"fail_code": step.fail_code},
+                    error_code=step.fail_code.lower(),
+                    error_message=error_message,
+                    error_class=error_class,
+                    retryable=retryable,
+                    backoff_ms=backoff_ms,
+                    prompt_tokens=len(haystack),
+                    completion_tokens=0,
+                    total_tokens=len(haystack),
+                )
+                if retryable:
+                    retry_index += 1
+                    if backoff_ms > 0:
+                        advance_with_pump(backoff_ms)
+                        if stop_event.is_set() or state.paused or state.active_run_id is None:
+                            raise PhaseExecutionError(
+                                error_code="interrupted",
+                                error_message="Attempt interrupted during retry backoff.",
+                            )
+                    continue
+                raise PhaseExecutionError(
+                    error_code=step.fail_code.lower(),
+                    error_message=error_message,
+                )
+            payload = step.output_json or fallback_payload or {}
+            output_text = serialized_output(step)
+            prompt_tokens = len(haystack)
+            completion_tokens = len(output_text)
+            finalize_attempt(
+                run_id,
+                attempt_id,
+                status="succeeded",
+                payload=payload,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=prompt_tokens + completion_tokens,
+            )
+            return payload
 
     def process_runtime_event(event: dict[str, Any]) -> None:
         event_type = event.get("event_type")
@@ -539,14 +753,53 @@ def run_worker() -> None:
         )
         if direct_mention:
             set_typing(True, state.active_run_id, "decision")
-        decision_step = adapter.select_step(decision_request(config.agent_id, latest))
-        handle_selected_step(decision_step)
-        if decision_step.delay_ms > 0:
-            advance_with_pump(decision_step.delay_ms)
+        decision_request_payload = decision_request(config.agent_id, latest)
+        try:
+            decision_payload = run_model_phase(
+                phase="decision",
+                request=decision_request_payload,
+                bundle_revision=str(decision_bundle["revision"]),
+                memory_revision_before=str(current_memory["revision"]),
+                staged_memory_revision=None,
+                fallback_payload={},
+            )
+        except AttemptBudgetRejectedError as exc:
+            post_status(
+                "BUDGET_EXHAUSTED",
+                "DECIDING",
+                state.active_run_id,
+                extra={
+                    "error_code": exc.error_code,
+                    "error_message": exc.error_message,
+                },
+            )
+            set_typing(False, state.active_run_id, "budget-exhausted")
+            state.active_run_id = None
+            state.expected_conversation_seq = None
+            state.dirty_since_seq = None
+            state.pending_roots.clear()
+            post_worker_state("LISTENING")
+            continue
+        except PhaseExecutionError as exc:
+            if state.active_run_id is not None:
+                post_status(
+                    "FATAL",
+                    "DECIDING",
+                    state.active_run_id,
+                    extra={
+                        "error_code": exc.error_code,
+                        "error_message": exc.error_message,
+                    },
+                )
+                set_typing(False, state.active_run_id, "fatal")
+                state.active_run_id = None
+                state.expected_conversation_seq = None
+                state.dirty_since_seq = None
+                state.pending_roots.clear()
+                post_worker_state("LISTENING")
+            continue
         if stop_event.is_set() or state.paused or state.active_run_id is None:
             continue
-
-        decision_payload = decision_step.output_json or {}
         decision_operations = normalize_memory_operations(decision_payload)
         decision_stage = runtime_store.stage_preview(
             operations=decision_operations,
@@ -591,20 +844,66 @@ def run_worker() -> None:
             observation_message_ids=[str(item["message_id"]) for item in current_batch],
             decision_payload=decision_payload,
         )
-        action_step = adapter.select_step(action_request(config.agent_id, decision_payload))
-        handle_selected_step(action_step)
         if not direct_mention:
             set_typing(True, state.active_run_id, "action")
-        if action_step.delay_ms > 0:
-            advance_with_pump(action_step.delay_ms)
+        action_request_payload = action_request(config.agent_id, decision_payload)
+        try:
+            draft = run_model_phase(
+                phase="action",
+                request=action_request_payload,
+                bundle_revision=str(action_bundle["revision"]),
+                memory_revision_before=str(current_memory["revision"]),
+                staged_memory_revision=(
+                    None if decision_stage is None else str(decision_stage["revision"])
+                ),
+                fallback_payload={
+                    "content_markdown": "ACK",
+                    "mentions": [],
+                    "primary_reply_to": state.caused_by_message_id,
+                    "responds_to": (
+                        [state.caused_by_message_id] if state.caused_by_message_id else []
+                    ),
+                },
+            )
+        except AttemptBudgetRejectedError as exc:
+            post_status(
+                "BUDGET_EXHAUSTED",
+                "ACTING",
+                state.active_run_id,
+                extra={
+                    "decision_json": decision_trace,
+                    "error_code": exc.error_code,
+                    "error_message": exc.error_message,
+                },
+            )
+            set_typing(False, state.active_run_id, "budget-exhausted")
+            state.active_run_id = None
+            state.expected_conversation_seq = None
+            state.dirty_since_seq = None
+            state.pending_roots.clear()
+            post_worker_state("LISTENING")
+            continue
+        except PhaseExecutionError as exc:
+            if state.active_run_id is not None:
+                post_status(
+                    "FATAL",
+                    "ACTING",
+                    state.active_run_id,
+                    extra={
+                        "decision_json": decision_trace,
+                        "error_code": exc.error_code,
+                        "error_message": exc.error_message,
+                    },
+                )
+                set_typing(False, state.active_run_id, "fatal")
+                state.active_run_id = None
+                state.expected_conversation_seq = None
+                state.dirty_since_seq = None
+                state.pending_roots.clear()
+                post_worker_state("LISTENING")
+            continue
         if stop_event.is_set() or state.paused or state.active_run_id is None:
             continue
-        draft = action_step.output_json or {
-            "content_markdown": action_step.output_text or "ACK",
-            "mentions": [],
-            "primary_reply_to": state.caused_by_message_id,
-            "responds_to": [state.caused_by_message_id] if state.caused_by_message_id else [],
-        }
         combined_operations = decision_operations + normalize_memory_operations(draft)
         staged_combined = runtime_store.stage_preview(
             operations=combined_operations,
@@ -718,6 +1017,7 @@ def run_worker() -> None:
         response_payload = response.json()
         committed_message = response_payload["message"]
         cp_revision = response_payload["cp_revision"]
+        state.reliable_seq = int(committed_message["conversation_seq"])
         memory_after = runtime_store.commit_operations(
             operations=combined_operations,
             run_id=state.active_run_id,

@@ -398,7 +398,7 @@ def compute_automatic_metrics(conversation: ConversationRecord) -> dict[str, Any
         latency = run["latency_ms"]
         if latency is not None:
             latency_values.append(int(latency))
-        for attempt in attempts_for_run(run_row, profile=profile):
+        for attempt in attempts_for_run(run_row, conversation=conversation, profile=profile):
             token_total += int(attempt["total_tokens"])
             cost_total = round(cost_total + float(attempt["cost_usd"]), 6)
     payload = {

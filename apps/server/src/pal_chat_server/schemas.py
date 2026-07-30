@@ -369,6 +369,13 @@ class RunAttemptRead(BaseModel):
     memory_revision_after: str | None = None
     staged_memory_revision: str | None = None
     payload: dict[str, Any] | None = None
+    status: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    retryable: bool | None = None
+    backoff_ms: int | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
     created_at: datetime
 
 

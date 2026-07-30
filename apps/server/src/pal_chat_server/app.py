@@ -27,6 +27,7 @@ from pal_chat_server.analysis import (
     load_manual_score,
     save_manual_score,
 )
+from pal_chat_server.attempts import finalize_attempt, register_attempt
 from pal_chat_server.config import Settings, get_settings
 from pal_chat_server.db import (
     ensure_catalog_schema,
@@ -1399,6 +1400,106 @@ def create_app() -> FastAPI:
         return snapshot
 
     @app.post(
+        "/internal/v1/conversations/{conversation_id}/agent-runs/{run_id}/attempts/register",
+        tags=["internal"],
+    )
+    def post_internal_attempt_register(
+        conversation_id: str,
+        run_id: str,
+        payload: dict[str, object],
+        request: Request,
+        db: Session = Depends(get_db_session),
+    ) -> dict[str, object]:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        token, agent_id, profile_hash = internal_auth_tuple(request)
+        get_worker_supervisor().verify(
+            conversation_id=conversation_id,
+            token=token,
+            agent_id=agent_id,
+            profile_hash=profile_hash,
+        )
+        profile = conversation_profile(conversation)
+        return register_attempt(
+            conversation,
+            profile=profile,
+            agent_id=agent_id,
+            run_id=run_id,
+            phase=str(payload.get("phase", "decision")),
+            bundle_revision=(
+                str(payload["bundle_revision"])
+                if payload.get("bundle_revision") is not None
+                else None
+            ),
+            memory_revision_before=(
+                str(payload["memory_revision_before"])
+                if payload.get("memory_revision_before") is not None
+                else None
+            ),
+            staged_memory_revision=(
+                str(payload["staged_memory_revision"])
+                if payload.get("staged_memory_revision") is not None
+                else None
+            ),
+            payload=cast(dict[str, Any] | None, payload.get("payload")),
+        )
+
+    @app.post(
+        "/internal/v1/conversations/{conversation_id}/agent-runs/{run_id}/attempts/{attempt_id}/finalize",
+        tags=["internal"],
+    )
+    def post_internal_attempt_finalize(
+        conversation_id: str,
+        run_id: str,
+        attempt_id: str,
+        payload: dict[str, object],
+        request: Request,
+        db: Session = Depends(get_db_session),
+    ) -> dict[str, object]:
+        del run_id
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        token, agent_id, profile_hash = internal_auth_tuple(request)
+        get_worker_supervisor().verify(
+            conversation_id=conversation_id,
+            token=token,
+            agent_id=agent_id,
+            profile_hash=profile_hash,
+        )
+        return finalize_attempt(
+            conversation,
+            attempt_id=attempt_id,
+            status=str(payload.get("status", "failed")),
+            payload=cast(dict[str, Any] | None, payload.get("payload")),
+            error_code=(
+                str(payload["error_code"]) if payload.get("error_code") is not None else None
+            ),
+            error_message=(
+                str(payload["error_message"])
+                if payload.get("error_message") is not None
+                else None
+            ),
+            error_class=(
+                str(payload["error_class"]) if payload.get("error_class") is not None else None
+            ),
+            retryable=bool(payload.get("retryable", False)),
+            backoff_ms=payload_optional_int(payload, "backoff_ms") or 0,
+            prompt_tokens=payload_optional_int(payload, "prompt_tokens") or 0,
+            completion_tokens=payload_optional_int(payload, "completion_tokens") or 0,
+            total_tokens=payload_optional_int(payload, "total_tokens") or 0,
+            cost_usd=(
+                float(str(payload["cost_usd"]))
+                if payload.get("cost_usd") is not None
+                else None
+            ),
+            memory_revision_after=(
+                str(payload["memory_revision_after"])
+                if payload.get("memory_revision_after") is not None
+                else None
+            ),
+        )
+
+    @app.post(
         "/internal/v1/conversations/{conversation_id}/agent-actions",
         tags=["internal"],
     )
@@ -1566,6 +1667,8 @@ def create_app() -> FastAPI:
                 next_typing_run_id = None
             decision_json = payload.get("decision_json")
             draft_message_json = payload.get("draft_message_json")
+            error_code = payload.get("error_code")
+            error_message = payload.get("error_message")
             connection.execute(
                 """
                 INSERT INTO agent_runtime_state(
@@ -1632,6 +1735,8 @@ def create_app() -> FastAPI:
                       agent_hop = excluded.agent_hop,
                       decision_json = excluded.decision_json,
                       draft_message_json = excluded.draft_message_json,
+                      error_code = excluded.error_code,
+                      error_message = excluded.error_message,
                       finished_at = CASE
                         WHEN excluded.status IN (
                           'BUDGET_EXHAUSTED', 'COMMITTED', 'INVALIDATED',
@@ -1667,8 +1772,8 @@ def create_app() -> FastAPI:
                         ),
                         None,
                         None,
-                        None,
-                        None,
+                        None if error_code is None else str(error_code),
+                        None if error_message is None else str(error_message),
                         run_status,
                     ),
                 )

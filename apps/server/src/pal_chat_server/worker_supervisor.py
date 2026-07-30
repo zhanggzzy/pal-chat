@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import WebSocket
 
 from pal_chat_server.agent_runtime import is_agent_runtime_enabled
+from pal_chat_server.attempts import mark_run_attempts_crashed
 from pal_chat_server.errors import AppError
 from pal_chat_server.models import ConversationRecord
 from pal_chat_server.schemas import ExperimentProfile
@@ -443,6 +444,13 @@ class WorkerSupervisor:
                 ),
             )
             if active_run_id is not None:
+                mark_run_attempts_crashed(
+                    connection,
+                    run_id=str(active_run_id),
+                    finished_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    error_code=error_code,
+                    error_message=error_message,
+                )
                 connection.execute(
                     """
                     UPDATE agent_runs

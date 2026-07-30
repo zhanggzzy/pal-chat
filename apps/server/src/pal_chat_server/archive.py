@@ -134,6 +134,53 @@ TRANSCRIPT_SCHEMA = (
       finished_at TEXT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS llm_attempts (
+      attempt_id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      phase TEXT NOT NULL,
+      phase_ordinal INTEGER NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      status TEXT NOT NULL,
+      profile_hash TEXT NOT NULL,
+      bundle_revision TEXT NULL,
+      memory_revision_before TEXT NULL,
+      memory_revision_after TEXT NULL,
+      staged_memory_revision TEXT NULL,
+      guardrails_json TEXT NOT NULL,
+      payload_json TEXT NULL,
+      error_code TEXT NULL,
+      error_message TEXT NULL,
+      error_class TEXT NULL,
+      retryable INTEGER NOT NULL DEFAULT 0,
+      backoff_ms INTEGER NOT NULL DEFAULT 0,
+      prompt_tokens INTEGER NOT NULL DEFAULT 0,
+      completion_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      started_at TEXT NOT NULL,
+      finished_at TEXT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_llm_attempts_run_id
+    ON llm_attempts(run_id, started_at, attempt_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_llm_attempts_agent_id
+    ON llm_attempts(agent_id, started_at, attempt_id)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS conversation_budget_ledger (
+      conversation_id TEXT PRIMARY KEY,
+      used_llm_calls INTEGER NOT NULL DEFAULT 0,
+      used_total_tokens INTEGER NOT NULL DEFAULT 0,
+      used_total_cost_usd REAL NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    )
+    """,
 )
 
 

@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
+from pal_chat_server.attempts import attempts_for_run as ledger_attempts_for_run
+from pal_chat_server.attempts import list_attempt_rows
 from pal_chat_server.errors import AppError
 from pal_chat_server.models import ConversationRecord
 from pal_chat_server.schemas import ExperimentProfile
@@ -120,8 +122,13 @@ def _phase_attempt(
 def attempts_for_run(
     run_row: sqlite3.Row,
     *,
+    conversation: ConversationRecord | None = None,
     profile: ExperimentProfile,
 ) -> list[dict[str, Any]]:
+    if conversation is not None:
+        ledger_items = ledger_attempts_for_run(conversation, run_id=str(run_row["run_id"]))
+        if ledger_items:
+            return ledger_items
     agent_profile = (
         profile.agent_a if run_row["agent_id"] == profile.agent_a.agent_id else profile.agent_b
     )
@@ -136,30 +143,38 @@ def attempts_for_run(
         else None
     )
     latency = _latency_ms(run_row["started_at"], run_row["finished_at"])
-    attempts = [
-        _phase_attempt(
-            run_row=run_row,
-            trace=cast(dict[str, Any] | None, decision),
-            phase="decision",
-            ordinal=1,
-            provider=provider,
-            model=model,
-            total_latency_ms=latency,
-        ),
-        _phase_attempt(
-            run_row=run_row,
-            trace=cast(dict[str, Any] | None, draft),
-            phase="action",
-            ordinal=2,
-            provider=provider,
-            model=model,
-            total_latency_ms=latency,
-        ),
-    ]
-    return [attempt for attempt in attempts if attempt is not None]
+    attempts: list[dict[str, Any]] = []
+    decision_attempt = _phase_attempt(
+        run_row=run_row,
+        trace=cast(dict[str, Any] | None, decision),
+        phase="decision",
+        ordinal=1,
+        provider=provider,
+        model=model,
+        total_latency_ms=latency,
+    )
+    if decision_attempt is not None:
+        attempts.append(decision_attempt)
+    action_attempt = _phase_attempt(
+        run_row=run_row,
+        trace=cast(dict[str, Any] | None, draft),
+        phase="action",
+        ordinal=2,
+        provider=provider,
+        model=model,
+        total_latency_ms=latency,
+    )
+    if action_attempt is not None:
+        attempts.append(action_attempt)
+    return attempts
 
 
-def build_run_record(run_row: sqlite3.Row, *, profile: ExperimentProfile) -> dict[str, Any]:
+def build_run_record(
+    run_row: sqlite3.Row,
+    *,
+    conversation: ConversationRecord,
+    profile: ExperimentProfile,
+) -> dict[str, Any]:
     return {
         "run_id": run_row["run_id"],
         "agent_id": run_row["agent_id"],
@@ -187,7 +202,7 @@ def build_run_record(run_row: sqlite3.Row, *, profile: ExperimentProfile) -> dic
         "updated_at": run_row["updated_at"],
         "finished_at": run_row["finished_at"],
         "latency_ms": _latency_ms(run_row["started_at"], run_row["finished_at"]),
-        "attempts": attempts_for_run(run_row, profile=profile),
+        "attempts": attempts_for_run(run_row, conversation=conversation, profile=profile),
     }
 
 
@@ -224,7 +239,7 @@ def list_runs(
             """,
             tuple(params),
         ).fetchall()
-    return [build_run_record(row, profile=profile) for row in rows]
+    return [build_run_record(row, conversation=conversation, profile=profile) for row in rows]
 
 
 def get_run(
@@ -244,7 +259,7 @@ def get_run(
         ).fetchone()
     if row is None:
         raise AppError(code="run_not_found", status_code=404, message="Run not found.")
-    return build_run_record(row, profile=profile)
+    return build_run_record(row, conversation=conversation, profile=profile)
 
 
 def list_memory_revisions(
@@ -310,6 +325,9 @@ def list_attempts(
     run_id: str | None,
 ) -> list[dict[str, Any]]:
     ensure_agent_id(profile, agent_id)
+    attempts = list_attempt_rows(conversation, agent_id=agent_id, run_id=run_id)
+    if attempts:
+        return attempts
     with connect_transcript(conversation) as connection:
         clauses = ["agent_id = ?"]
         params: list[object] = [agent_id]
@@ -325,10 +343,10 @@ def list_attempts(
             """,
             tuple(params),
         ).fetchall()
-    attempts: list[dict[str, Any]] = []
+    fallback_attempts: list[dict[str, Any]] = []
     for row in rows:
-        attempts.extend(attempts_for_run(row, profile=profile))
-    return attempts
+        fallback_attempts.extend(attempts_for_run(row, conversation=conversation, profile=profile))
+    return fallback_attempts
 
 
 def list_causal_episodes(conversation: ConversationRecord) -> list[dict[str, Any]]:

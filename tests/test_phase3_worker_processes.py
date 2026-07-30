@@ -29,6 +29,7 @@ def configure_runtime(
     timing: dict[str, Any] | None = None,
     budget: dict[str, Any] | None = None,
     worker_restart_limit: int | None = None,
+    guardrails_patch: dict[str, Any] | None = None,
 ) -> str:
     profile = default_profile_payload(server.client)
     modules = cast(dict[str, dict[str, Any]], profile["modules"])
@@ -48,10 +49,15 @@ def configure_runtime(
     )
     assert created.status_code == 201
     conversation_id = cast(str, created.json()["id"])
+    patch_payload: dict[str, Any] = {}
     if worker_restart_limit is not None:
+        patch_payload["worker_restart_limit"] = worker_restart_limit
+    if guardrails_patch:
+        patch_payload.update(guardrails_patch)
+    if patch_payload:
         patched = server.client.patch(
             f"/api/v1/conversations/{conversation_id}/guardrails",
-            json={"worker_restart_limit": worker_restart_limit},
+            json=patch_payload,
         )
         assert patched.status_code == 200
     validate = server.client.post(f"/api/v1/conversations/{conversation_id}/validate")
@@ -229,6 +235,37 @@ def runtime_state_for_agent(conversation_id: str, agent_id: str) -> dict[str, An
         if row["agent_id"] == agent_id:
             return row
     return None
+
+
+def agent_is_listening(conversation_id: str, agent_id: str) -> bool:
+    runtime_state = runtime_state_for_agent(conversation_id, agent_id)
+    return runtime_state is not None and runtime_state["worker_state"] == "LISTENING"
+
+
+def attempt_rows(conversation_id: str) -> list[dict[str, Any]]:
+    rows = fetch_rows(
+        conversation_id,
+        """
+        SELECT attempt_id, run_id, agent_id, phase, phase_ordinal, status, error_code,
+               error_class, retryable, backoff_ms, prompt_tokens, completion_tokens,
+               total_tokens, cost_usd, started_at, finished_at
+        FROM llm_attempts
+        ORDER BY started_at, attempt_id
+        """,
+    )
+    return [dict(row) for row in rows]
+
+
+def budget_ledger(conversation_id: str) -> dict[str, Any]:
+    rows = fetch_rows(
+        conversation_id,
+        """
+        SELECT conversation_id, used_llm_calls, used_total_tokens, used_total_cost_usd
+        FROM conversation_budget_ledger
+        """
+    )
+    assert len(rows) == 1
+    return dict(rows[0])
 
 
 def h06_trace(
@@ -909,6 +946,201 @@ def test_h10_guardrails_reload_only_at_next_run_checkpoint(
     assert conversation_after["guardrails"]["max_llm_calls"] == 7
     assert conversation_after["profile_hash"] == original_hash
     assert conversation_after["locked_profile"] == conversation_before["locked_profile"]
+
+
+def test_h11_live_retryable_attempts_are_persisted_and_eventually_commit(
+    live_process_server: LiveServer,
+) -> None:
+    conversation_id = configure_runtime(
+        live_process_server,
+        script=[
+            {
+                "purpose": "decision",
+                "agent_id": "agent-a",
+                "call_index": 1,
+                "fail_code": "HTTP_429",
+            },
+            {
+                "purpose": "decision",
+                "agent_id": "agent-a",
+                "call_index": 2,
+                "fail_code": "HTTP_503",
+            },
+            {
+                "purpose": "decision",
+                "agent_id": "agent-a",
+                "call_index": 3,
+                "output_json": {"should_reply": True, "reason_codes": ["retry-succeeded"]},
+            },
+            {
+                "purpose": "action",
+                "agent_id": "agent-a",
+                "call_index": 4,
+                "output_json": {
+                    "content_markdown": "重试后成功提交",
+                    "mentions": [],
+                    "primary_reply_to": None,
+                    "responds_to": [],
+                },
+            },
+        ],
+        timing={"base_wait_ms": 0, "per_char_wait_ms": 0},
+    )
+    submit_user_message(
+        live_process_server.client,
+        conversation_id,
+        client_message_id="h11-retry-user",
+        content_markdown="@A 需要重试后再回复",
+        mentions=["agent-a"],
+    )
+    wait_until(
+        lambda: [
+            message["content_markdown"]
+            for message in agent_messages(live_process_server.client, conversation_id)
+        ]
+        == ["重试后成功提交"]
+    )
+
+    attempts = attempt_rows(conversation_id)
+    assert [(row["phase"], row["status"]) for row in attempts] == [
+        ("decision", "failed"),
+        ("decision", "failed"),
+        ("decision", "succeeded"),
+        ("action", "succeeded"),
+    ]
+    assert [row["error_class"] for row in attempts[:2]] == ["http_429", "http_5xx"]
+    assert [row["retryable"] for row in attempts[:2]] == [1, 1]
+    assert [row["backoff_ms"] for row in attempts[:2]] == [200, 300]
+    assert run_statuses(conversation_id) == ["COMMITTED"]
+    wait_until(lambda: agent_is_listening(conversation_id, "agent-a"))
+    runtime_state = runtime_state_for_agent(conversation_id, "agent-a")
+    assert runtime_state is not None
+    assert runtime_state == {
+        "agent_id": "agent-a",
+        "worker_state": "LISTENING",
+        "active_run_id": None,
+        "typing_status": "idle",
+        "typing_run_id": None,
+        "reliable_seq": 2,
+        "dirty_since_seq": None,
+    }
+
+
+def test_h11_live_non_retryable_failure_converges_without_public_commit(
+    live_process_server: LiveServer,
+) -> None:
+    conversation_id = configure_runtime(
+        live_process_server,
+        script=[
+            {
+                "purpose": "decision",
+                "agent_id": "agent-a",
+                "output_json": {"should_reply": True, "reason_codes": ["must-reply"]},
+            },
+            {
+                "purpose": "action",
+                "agent_id": "agent-a",
+                "fail_code": "HTTP_400",
+            },
+        ],
+        timing={"base_wait_ms": 0, "per_char_wait_ms": 0},
+    )
+    submit_user_message(
+        live_process_server.client,
+        conversation_id,
+        client_message_id="h11-fatal-user",
+        content_markdown="@A 不可重试失败",
+        mentions=["agent-a"],
+    )
+    wait_until(lambda: run_statuses(conversation_id) == ["FATAL"])
+
+    attempts = attempt_rows(conversation_id)
+    assert [(row["phase"], row["status"]) for row in attempts] == [
+        ("decision", "succeeded"),
+        ("action", "failed"),
+    ]
+    assert attempts[1]["error_class"] == "non_retryable"
+    assert attempts[1]["retryable"] == 0
+    assert agent_messages(live_process_server.client, conversation_id) == []
+    wait_until(lambda: agent_is_listening(conversation_id, "agent-a"))
+    runtime_state = runtime_state_for_agent(conversation_id, "agent-a")
+    assert runtime_state is not None
+    assert runtime_state == {
+        "agent_id": "agent-a",
+        "worker_state": "LISTENING",
+        "active_run_id": None,
+        "typing_status": "idle",
+        "typing_run_id": None,
+        "reliable_seq": 1,
+        "dirty_since_seq": None,
+    }
+
+
+def test_h16_live_conversation_budgets_reject_followup_attempts_without_commit(
+    live_process_server: LiveServer,
+) -> None:
+    conversation_id = configure_runtime(
+        live_process_server,
+        script=[
+            {
+                "purpose": "decision",
+                "agent_id": "agent-a",
+                "call_index": 1,
+                "fail_code": "TIMEOUT",
+            },
+            {
+                "purpose": "decision",
+                "agent_id": "agent-a",
+                "call_index": 2,
+                "output_json": {
+                    "should_reply": True,
+                    "reason_codes": ["budget-hit"],
+                    "memory_delta": {
+                        "operations": [{"op": "set", "key": "note", "value": "should-not-commit"}]
+                    },
+                },
+            },
+        ],
+        timing={"base_wait_ms": 0, "per_char_wait_ms": 0},
+        guardrails_patch={"max_llm_calls": 2, "max_total_tokens": 20},
+    )
+    submit_user_message(
+        live_process_server.client,
+        conversation_id,
+        client_message_id="h16-budget-user",
+        content_markdown="@A 预算打满",
+        mentions=["agent-a"],
+    )
+    wait_until(lambda: run_statuses(conversation_id) == ["BUDGET_EXHAUSTED"])
+
+    attempts = attempt_rows(conversation_id)
+    assert [(row["phase"], row["status"]) for row in attempts] == [
+        ("decision", "failed"),
+        ("decision", "succeeded"),
+        ("action", "rejected"),
+    ]
+    assert agent_messages(live_process_server.client, conversation_id) == []
+    ledger = budget_ledger(conversation_id)
+    assert ledger["used_llm_calls"] == 2
+    assert ledger["used_total_tokens"] >= 20
+    wait_until(lambda: agent_is_listening(conversation_id, "agent-a"))
+    runtime_state = runtime_state_for_agent(conversation_id, "agent-a")
+    assert runtime_state is not None
+    assert runtime_state == {
+        "agent_id": "agent-a",
+        "worker_state": "LISTENING",
+        "active_run_id": None,
+        "typing_status": "idle",
+        "typing_run_id": None,
+        "reliable_seq": 1,
+        "dirty_since_seq": None,
+    }
+    memory_items = live_process_server.client.get(
+        f"/api/v1/conversations/{conversation_id}/agents/agent-a/memory/revisions"
+    )
+    assert memory_items.status_code == 200
+    revisions = cast(list[dict[str, Any]], memory_items.json()["items"])
+    assert all(item["run_id"] is None for item in revisions)
 
 
 def test_real_worker_auth_isolation_revocation_and_path_escape(
