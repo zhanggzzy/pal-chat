@@ -446,6 +446,7 @@ class WorkerSupervisor:
             if active_run_id is not None:
                 mark_run_attempts_crashed(
                     connection,
+                    conversation_id=conversation.id,
                     run_id=str(active_run_id),
                     finished_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     error_code=error_code,

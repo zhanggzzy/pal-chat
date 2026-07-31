@@ -37,8 +37,53 @@ class ScriptedModelAdapter:
         self.clock = clock
         self._call_count = 0
 
-    def select_step(self, request: ModelRequest) -> ScriptedStep:
+    def _effective_call_index(self, request: ModelRequest) -> int:
+        hinted = request.metadata.get("call_index")
+        if hinted is not None:
+            return int(hinted)
         self._call_count += 1
+        return self._call_count
+
+    def _default_step(self, request: ModelRequest, *, haystack: str) -> ScriptedStep:
+        purpose = request.purpose
+        metadata = request.metadata
+        if purpose == "decision":
+            return ScriptedStep(
+                output_json={"should_reply": False, "reason_codes": []},
+            )
+        if purpose == "action":
+            return ScriptedStep(
+                output_json={
+                    "content_markdown": "ACK",
+                    "mentions": [],
+                    "primary_reply_to": metadata.get("primary_reply_to"),
+                    "responds_to": metadata.get("responds_to", []),
+                }
+            )
+        if purpose == "projection":
+            has_open_segment = bool(metadata.get("has_open_segment"))
+            return ScriptedStep(
+                output_json={
+                    "operation": "APPEND_CURRENT" if has_open_segment else "START_NEW_SEGMENT",
+                    "segment_title": str(
+                        metadata.get("default_segment_title", "公共消息")
+                    ),
+                    "updated_summary": haystack[:140],
+                }
+            )
+        if purpose == "reconsideration":
+            return ScriptedStep(
+                output_json={"should_continue": False, "reason": "stale"}
+            )
+        if purpose == "repair":
+            fallback_payload = metadata.get("fallback_payload")
+            if isinstance(fallback_payload, dict):
+                return ScriptedStep(output_json=fallback_payload)
+            return ScriptedStep(output_json={})
+        return ScriptedStep(output_text="ACK")
+
+    def select_step(self, request: ModelRequest) -> ScriptedStep:
+        call_index = self._effective_call_index(request)
         haystack = "\n".join(message["content"] for message in request.messages)
         agent_id = str(request.metadata.get("agent_id", ""))
         selected = next(
@@ -47,18 +92,19 @@ class ScriptedModelAdapter:
                 for step in self.steps
                 if (step.purpose is None or step.purpose == request.purpose)
                 and (step.agent_id is None or step.agent_id == agent_id)
-                and (step.call_index is None or step.call_index == self._call_count)
+                and (step.call_index is None or step.call_index == call_index)
                 and (step.match_contains is None or step.match_contains in haystack)
             ),
             None,
         )
         if selected is None:
-            return ScriptedStep(output_text="ACK")
+            return self._default_step(request, haystack=haystack)
         return selected
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
         haystack = "\n".join(message["content"] for message in request.messages)
         selected = self.select_step(request)
+        call_index = int(request.metadata.get("call_index", self._call_count))
         if selected.delay_ms > 0:
             if isinstance(self.clock, VirtualClock):
                 self.clock.advance(timedelta(milliseconds=selected.delay_ms))
@@ -80,6 +126,6 @@ class ScriptedModelAdapter:
                 "matched": selected.match_contains,
                 "purpose": selected.purpose,
                 "agent_id": selected.agent_id,
-                "call_index": self._call_count,
+                "call_index": call_index,
             },
         )

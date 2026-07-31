@@ -137,10 +137,13 @@ TRANSCRIPT_SCHEMA = (
     """
     CREATE TABLE IF NOT EXISTS llm_attempts (
       attempt_id TEXT PRIMARY KEY,
-      run_id TEXT NOT NULL,
-      agent_id TEXT NOT NULL,
+      owner_kind TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      run_id TEXT NULL,
+      agent_id TEXT NULL,
       phase TEXT NOT NULL,
       phase_ordinal INTEGER NOT NULL,
+      parent_attempt_id TEXT NULL,
       provider TEXT NOT NULL,
       model TEXT NOT NULL,
       status TEXT NOT NULL,
@@ -156,6 +159,7 @@ TRANSCRIPT_SCHEMA = (
       error_class TEXT NULL,
       retryable INTEGER NOT NULL DEFAULT 0,
       backoff_ms INTEGER NOT NULL DEFAULT 0,
+      reserved_tokens INTEGER NOT NULL DEFAULT 0,
       prompt_tokens INTEGER NOT NULL DEFAULT 0,
       completion_tokens INTEGER NOT NULL DEFAULT 0,
       total_tokens INTEGER NOT NULL DEFAULT 0,
@@ -173,10 +177,29 @@ TRANSCRIPT_SCHEMA = (
     ON llm_attempts(agent_id, started_at, attempt_id)
     """,
     """
+    CREATE TABLE IF NOT EXISTS llm_admission_events (
+      admission_id TEXT PRIMARY KEY,
+      owner_kind TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      run_id TEXT NULL,
+      agent_id TEXT NULL,
+      phase TEXT NOT NULL,
+      decision TEXT NOT NULL,
+      reason_code TEXT NULL,
+      reason_message TEXT NULL,
+      reserved_tokens INTEGER NOT NULL DEFAULT 0,
+      profile_hash TEXT NOT NULL,
+      guardrails_json TEXT NOT NULL,
+      payload_json TEXT NULL,
+      created_at TEXT NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS conversation_budget_ledger (
       conversation_id TEXT PRIMARY KEY,
       used_llm_calls INTEGER NOT NULL DEFAULT 0,
       used_total_tokens INTEGER NOT NULL DEFAULT 0,
+      reserved_total_tokens INTEGER NOT NULL DEFAULT 0,
       used_total_cost_usd REAL NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL
     )
@@ -214,6 +237,42 @@ def ensure_archive_layout(settings: Settings, conversation_id: str) -> Path:
         if "typing_run_id" not in columns:
             connection.execute(
                 "ALTER TABLE agent_runtime_state ADD COLUMN typing_run_id TEXT NULL"
+            )
+        attempt_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(llm_attempts)")
+        }
+        if attempt_columns:
+            if "owner_kind" not in attempt_columns:
+                connection.execute(
+                    "ALTER TABLE llm_attempts ADD COLUMN owner_kind TEXT NULL"
+                )
+                connection.execute(
+                    "UPDATE llm_attempts SET owner_kind = 'agent_run' WHERE owner_kind IS NULL"
+                )
+            if "owner_id" not in attempt_columns:
+                connection.execute(
+                    "ALTER TABLE llm_attempts ADD COLUMN owner_id TEXT NULL"
+                )
+                connection.execute(
+                    "UPDATE llm_attempts SET owner_id = run_id WHERE owner_id IS NULL"
+                )
+            if "parent_attempt_id" not in attempt_columns:
+                connection.execute(
+                    "ALTER TABLE llm_attempts ADD COLUMN parent_attempt_id TEXT NULL"
+                )
+            if "reserved_tokens" not in attempt_columns:
+                connection.execute(
+                    "ALTER TABLE llm_attempts ADD COLUMN reserved_tokens INTEGER NOT NULL DEFAULT 0"
+                )
+        budget_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(conversation_budget_ledger)")
+        }
+        if budget_columns and "reserved_total_tokens" not in budget_columns:
+            connection.execute(
+                "ALTER TABLE conversation_budget_ledger "
+                "ADD COLUMN reserved_total_tokens INTEGER NOT NULL DEFAULT 0"
             )
         connection.commit()
     return root

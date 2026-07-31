@@ -27,8 +27,16 @@ from pal_chat_server.analysis import (
     load_manual_score,
     save_manual_score,
 )
-from pal_chat_server.attempts import finalize_attempt, register_attempt
+from pal_chat_server.attempts import (
+    AdmissionRejectedError,
+    InvocationContext,
+    InvocationError,
+    finalize_attempt,
+    invoke_model,
+    register_attempt,
+)
 from pal_chat_server.config import Settings, get_settings
+from pal_chat_server.contracts import ModelRequest
 from pal_chat_server.db import (
     ensure_catalog_schema,
     get_db_session,
@@ -130,6 +138,7 @@ from pal_chat_server.services import (
     patch_guardrails,
     pause_conversation,
     resume_conversation,
+    scripted_adapter_from_profile,
     start_conversation,
     sync_catalog_from_manifests,
     to_template_read,
@@ -151,6 +160,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 def _catalog_bootstrap(db: Session, settings: Settings) -> None:
     ensure_default_template(db)
     sync_catalog_from_manifests(db, settings)
+
+
+def _context_owner_id(context_payload: dict[str, Any]) -> str:
+    return str(
+        context_payload.get("owner_id") or context_payload.get("run_id") or ""
+    )
 
 
 def create_app() -> FastAPI:
@@ -1498,6 +1513,188 @@ def create_app() -> FastAPI:
                 else None
             ),
         )
+
+    @app.post(
+        "/internal/v1/conversations/{conversation_id}/model-invocations",
+        tags=["internal"],
+    )
+    def post_internal_model_invocation(
+        conversation_id: str,
+        payload: dict[str, object],
+        request: Request,
+        db: Session = Depends(get_db_session),
+    ) -> dict[str, object]:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        token, agent_id, profile_hash = internal_auth_tuple(request)
+        get_worker_supervisor().verify(
+            conversation_id=conversation_id,
+            token=token,
+            agent_id=agent_id,
+            profile_hash=profile_hash,
+        )
+        profile = conversation_profile(conversation)
+        request_payload = cast(dict[str, Any], payload.get("request") or {})
+        context_payload = cast(dict[str, Any], payload.get("context") or {})
+        model_request = ModelRequest.model_validate(request_payload)
+        adapter = scripted_adapter_from_profile(profile)
+        repair_enabled = bool(payload.get("repair_enabled", False))
+        try:
+            result = invoke_model(
+                conversation,
+                profile=profile,
+                adapter=adapter,
+                request=model_request,
+                context=InvocationContext(
+                    owner_kind=str(context_payload.get("owner_kind", "agent_run")),
+                    owner_id=_context_owner_id(context_payload),
+                    run_id=(
+                        str(context_payload["run_id"])
+                        if context_payload.get("run_id") is not None
+                        else None
+                    ),
+                    agent_id=(
+                        str(context_payload["agent_id"])
+                        if context_payload.get("agent_id") is not None
+                        else agent_id
+                    ),
+                    phase=str(context_payload.get("phase", model_request.purpose)),
+                    profile_hash=str(context_payload.get("profile_hash", profile_hash)),
+                    bundle_revision=(
+                        str(context_payload["bundle_revision"])
+                        if context_payload.get("bundle_revision") is not None
+                        else None
+                    ),
+                    memory_revision_before=(
+                        str(context_payload["memory_revision_before"])
+                        if context_payload.get("memory_revision_before") is not None
+                        else None
+                    ),
+                    staged_memory_revision=(
+                        str(context_payload["staged_memory_revision"])
+                        if context_payload.get("staged_memory_revision") is not None
+                        else None
+                    ),
+                    parent_attempt_id=(
+                        str(context_payload["parent_attempt_id"])
+                        if context_payload.get("parent_attempt_id") is not None
+                        else None
+                    ),
+                    payload=cast(dict[str, Any] | None, context_payload.get("payload")),
+                    estimated_input_tokens=int(context_payload.get("estimated_input_tokens", 0)),
+                    max_output_tokens=int(context_payload.get("max_output_tokens", 0)),
+                ),
+            )
+            return {"ok": True, "payload": result, "consumed_call_count": 1}
+        except AdmissionRejectedError as exc:
+            return {
+                "ok": False,
+                "admitted": False,
+                "error_code": exc.code,
+                "error_message": exc.message,
+                "consumed_call_count": 0,
+            }
+        except InvocationError as exc:
+            if repair_enabled and exc.code == "INVALID_OUTPUT" and exc.attempt_id is not None:
+                repair_request = ModelRequest(
+                    purpose="repair",
+                    system_prompt="",
+                    messages=[
+                        {
+                            "content": json.dumps(
+                                {
+                                    "phase": model_request.purpose,
+                                    "raw_output_text": exc.payload.get("raw_output_text", ""),
+                                },
+                                ensure_ascii=False,
+                                sort_keys=True,
+                            )
+                        }
+                    ],
+                    metadata={
+                        "agent_id": agent_id,
+                        "call_index": int(model_request.metadata.get("call_index", 0)) + 1,
+                        "fallback_payload": cast(
+                            dict[str, Any] | None,
+                            model_request.metadata.get("fallback_payload"),
+                        )
+                        or {},
+                    },
+                )
+                try:
+                    repaired = invoke_model(
+                        conversation,
+                        profile=profile,
+                        adapter=adapter,
+                        request=repair_request,
+                        context=InvocationContext(
+                            owner_kind=str(context_payload.get("owner_kind", "agent_run")),
+                            owner_id=_context_owner_id(context_payload),
+                            run_id=(
+                                str(context_payload["run_id"])
+                                if context_payload.get("run_id") is not None
+                                else None
+                            ),
+                            agent_id=agent_id,
+                            phase="repair",
+                            profile_hash=str(context_payload.get("profile_hash", profile_hash)),
+                            bundle_revision=(
+                                str(context_payload["bundle_revision"])
+                                if context_payload.get("bundle_revision") is not None
+                                else None
+                            ),
+                            memory_revision_before=(
+                                str(context_payload["memory_revision_before"])
+                                if context_payload.get("memory_revision_before") is not None
+                                else None
+                            ),
+                            staged_memory_revision=(
+                                str(context_payload["staged_memory_revision"])
+                                if context_payload.get("staged_memory_revision") is not None
+                                else None
+                            ),
+                            parent_attempt_id=exc.attempt_id,
+                            payload={"repair_of_attempt_id": exc.attempt_id, **exc.payload},
+                            estimated_input_tokens=max(
+                                1, len(exc.payload.get("raw_output_text", "")) // 4
+                            ),
+                            max_output_tokens=int(model_request.max_tokens),
+                        ),
+                    )
+                    return {
+                        "ok": True,
+                        "payload": repaired,
+                        "consumed_call_count": 2,
+                    }
+                except AdmissionRejectedError as repair_exc:
+                    return {
+                        "ok": False,
+                        "admitted": False,
+                        "error_code": repair_exc.code,
+                        "error_message": repair_exc.message,
+                        "consumed_call_count": 1,
+                    }
+                except InvocationError as repair_err:
+                    return {
+                        "ok": False,
+                        "admitted": True,
+                        "error_code": repair_err.code,
+                        "error_message": repair_err.message,
+                        "error_class": repair_err.error_class,
+                        "retryable": repair_err.retryable,
+                        "backoff_ms": repair_err.backoff_ms,
+                        "consumed_call_count": 2,
+                    }
+            return {
+                "ok": False,
+                "admitted": True,
+                "error_code": exc.code,
+                "error_message": exc.message,
+                "error_class": exc.error_class,
+                "retryable": exc.retryable,
+                "backoff_ms": exc.backoff_ms,
+                "consumed_call_count": 1,
+            }
 
     @app.post(
         "/internal/v1/conversations/{conversation_id}/agent-actions",

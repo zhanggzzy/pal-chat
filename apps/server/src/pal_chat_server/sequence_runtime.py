@@ -16,10 +16,12 @@ from fastapi import WebSocket
 
 from pal_chat_server.archive import append_observation, transcript_path
 from pal_chat_server.clock import Clock, RealClock
+from pal_chat_server.contracts import ModelRequest
 from pal_chat_server.errors import AppError
 from pal_chat_server.ids import generate_ulid
 from pal_chat_server.models import ConversationRecord
 from pal_chat_server.schemas import ExperimentProfile
+from pal_chat_server.scripted_adapter import ScriptedModelAdapter, ScriptedStep
 
 
 @dataclass(slots=True)
@@ -49,6 +51,21 @@ class ProjectionStep:
 
 class ProjectionError(Exception):
     pass
+
+
+@dataclass(slots=True)
+class PreparedCommit:
+    request_hash: str
+    checkpoint_seq: int
+    checkpoint_revision: int
+    checkpoint_snapshot: dict[str, Any]
+    created_at: str
+
+
+@dataclass(slots=True)
+class ProjectionResult:
+    next_revision: int
+    snapshot: dict[str, Any]
 
 
 class ConversationSocketManager:
@@ -130,7 +147,6 @@ def message_request_hash(payload: MessagePayload) -> str:
             "responds_to": payload.responds_to,
             "sender_kind": payload.sender_kind,
             "sender_id": payload.sender_id,
-            "expected_conversation_seq": payload.expected_conversation_seq,
             "idempotency_key": payload.idempotency_key,
             "causal_episode_id": payload.causal_episode_id,
             "caused_by_message_id": payload.caused_by_message_id,
@@ -175,6 +191,44 @@ def parse_projection_steps(profile: ExperimentProfile) -> list[ProjectionStep]:
     return [ProjectionStep(**item) for item in steps]
 
 
+def projection_script_steps(profile: ExperimentProfile) -> list[ScriptedStep]:
+    selection = profile.modules.get("projection")
+    if selection is None:
+        return []
+    items = selection.config.get("script", [])
+    steps: list[ScriptedStep] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if "output_json" in item or "output_text" in item or "fail_code" in item:
+            step_payload = dict(item)
+            step_payload.setdefault("purpose", "projection")
+            steps.append(ScriptedStep.model_validate(step_payload))
+            continue
+        legacy = ProjectionStep(**item)
+        if legacy.fail:
+            steps.append(
+                ScriptedStep(
+                    purpose="projection",
+                    match_contains=legacy.match_contains,
+                    fail_code="PROJECTION_FAILED",
+                )
+            )
+            continue
+        steps.append(
+            ScriptedStep(
+                purpose="projection",
+                match_contains=legacy.match_contains,
+                output_json={
+                    "operation": legacy.operation,
+                    "segment_title": legacy.segment_title,
+                    "updated_summary": legacy.updated_summary,
+                },
+            )
+        )
+    return steps
+
+
 def budget_limits(profile: ExperimentProfile) -> tuple[int, int, int]:
     selection = profile.modules.get("budget")
     config = selection.config if selection is not None else {}
@@ -185,39 +239,24 @@ def budget_limits(profile: ExperimentProfile) -> tuple[int, int, int]:
     )
 
 
-def apply_projection(
+def _apply_projection_operation(
     *,
-    profile: ExperimentProfile,
+    strategy_id: str,
     content_markdown: str,
     primary_reply_to: str | None,
     mentions: list[str],
     current_revision: int,
     current_snapshot: dict[str, Any],
-) -> tuple[int, dict[str, Any]]:
-    selection = profile.modules["projection"]
-    strategy_id = selection.module_id
+    operation: str,
+    segment_title: str | None,
+    updated_summary: str | None,
+) -> ProjectionResult:
     snapshot = json.loads(json.dumps(current_snapshot))
     segments = snapshot.setdefault("segments", [])
-    steps = parse_projection_steps(profile)
-
-    for step in steps:
-        if step.match_contains is None or step.match_contains in content_markdown:
-            if step.fail:
-                raise ProjectionError("Scripted projection failure")
-            operation = step.operation
-            break
-    else:
-        operation = "START_NEW_SEGMENT" if not segments else "APPEND_CURRENT"
-
-    if strategy_id == "projection.fixed-window":
-        window_size = int(selection.config.get("window_size", 2))
-        if segments and len(segments[-1]["message_refs"]) < window_size:
-            operation = "APPEND_CURRENT"
-        else:
-            operation = "START_NEW_SEGMENT"
 
     next_revision = current_revision + 1
-    segment_title = mentions[0] if mentions else "公共消息"
+    default_title = mentions[0] if mentions else "公共消息"
+    resolved_title = segment_title or default_title
 
     if operation == "START_NEW_SEGMENT" or not segments:
         if segments:
@@ -230,8 +269,8 @@ def apply_projection(
             "message_refs": [],
             "start_seq": None,
             "end_seq": None,
-            "title": segment_title,
-            "summary": content_markdown[:140],
+            "title": resolved_title,
+            "summary": updated_summary or content_markdown[:140],
             "base_activation": 0.5 if primary_reply_to else 0.35,
             "activation_updated_at": utc_now().isoformat(),
             "created_revision": next_revision,
@@ -243,7 +282,242 @@ def apply_projection(
         raise ProjectionError(f"Unsupported projection operation: {operation}")
 
     snapshot["last_operation"] = operation
-    return next_revision, snapshot
+    if updated_summary is not None and segments:
+        segments[-1]["summary"] = updated_summary
+    return ProjectionResult(next_revision=next_revision, snapshot=snapshot)
+
+
+def _fixed_window_projection(
+    *,
+    profile: ExperimentProfile,
+    content_markdown: str,
+    primary_reply_to: str | None,
+    mentions: list[str],
+    current_revision: int,
+    current_snapshot: dict[str, Any],
+) -> ProjectionResult:
+    selection = profile.modules["projection"]
+    snapshot = json.loads(json.dumps(current_snapshot))
+    segments = snapshot.setdefault("segments", [])
+    window_size = int(selection.config.get("window_size", 2))
+    if segments and len(segments[-1]["message_refs"]) < window_size:
+        operation = "APPEND_CURRENT"
+    else:
+        operation = "START_NEW_SEGMENT"
+    return _apply_projection_operation(
+        strategy_id=selection.module_id,
+        content_markdown=content_markdown,
+        primary_reply_to=primary_reply_to,
+        mentions=mentions,
+        current_revision=current_revision,
+        current_snapshot=current_snapshot,
+        operation=operation,
+        segment_title=None,
+        updated_summary=content_markdown[:140],
+    )
+
+
+def apply_projection(
+    conversation: ConversationRecord,
+    *,
+    profile: ExperimentProfile,
+    payload: MessagePayload,
+    current_revision: int,
+    current_snapshot: dict[str, Any],
+) -> ProjectionResult:
+    selection = profile.modules["projection"]
+    if selection.module_id == "projection.fixed-window":
+        return _fixed_window_projection(
+            profile=profile,
+            content_markdown=payload.content_markdown,
+            primary_reply_to=payload.primary_reply_to,
+            mentions=payload.mentions,
+            current_revision=current_revision,
+            current_snapshot=current_snapshot,
+        )
+
+    adapter = ScriptedModelAdapter(projection_script_steps(profile))
+    request = ModelRequest(
+        purpose="projection",
+        system_prompt="",
+        messages=[{"content": payload.content_markdown}],
+        metadata={
+            "has_open_segment": bool(current_snapshot.get("segments")),
+            "default_segment_title": payload.mentions[0] if payload.mentions else "公共消息",
+            "primary_reply_to": payload.primary_reply_to,
+            "responds_to": payload.responds_to,
+            "sender_kind": payload.sender_kind,
+            "sender_id": payload.sender_id,
+        },
+    )
+    from pal_chat_server.attempts import (
+        AdmissionRejectedError,
+        InvocationContext,
+        InvocationError,
+        invoke_model,
+    )
+
+    try:
+        projection_payload = invoke_model(
+            conversation,
+            profile=profile,
+            adapter=adapter,
+            request=request,
+            context=InvocationContext(
+                owner_kind="server_projection",
+                owner_id=payload.client_message_id,
+                phase="projection",
+                profile_hash=conversation.profile_hash or "",
+                payload={
+                    "client_message_id": payload.client_message_id,
+                    "expected_conversation_seq": payload.expected_conversation_seq,
+                },
+                estimated_input_tokens=max(1, len(payload.content_markdown) // 4),
+                max_output_tokens=int(request.max_tokens),
+            ),
+        )
+    except AdmissionRejectedError:
+        return _apply_projection_operation(
+            strategy_id=selection.module_id,
+            content_markdown=payload.content_markdown,
+            primary_reply_to=payload.primary_reply_to,
+            mentions=payload.mentions,
+            current_revision=current_revision,
+            current_snapshot=current_snapshot,
+            operation="APPEND_CURRENT",
+            segment_title=None,
+            updated_summary=payload.content_markdown[:140],
+        )
+    except InvocationError as exc:
+        raise ProjectionError(exc.message) from exc
+
+    operation = str(projection_payload.get("operation", "APPEND_CURRENT"))
+    return _apply_projection_operation(
+        strategy_id=selection.module_id,
+        content_markdown=payload.content_markdown,
+        primary_reply_to=payload.primary_reply_to,
+        mentions=payload.mentions,
+        current_revision=current_revision,
+        current_snapshot=current_snapshot,
+        operation=operation,
+        segment_title=(
+            str(projection_payload["segment_title"])
+            if projection_payload.get("segment_title") is not None
+            else None
+        ),
+        updated_summary=(
+            str(projection_payload["updated_summary"])
+            if projection_payload.get("updated_summary") is not None
+            else payload.content_markdown[:140]
+        ),
+    )
+
+
+def _prepare_commit(
+    connection: sqlite3.Connection,
+    *,
+    conversation: ConversationRecord,
+    profile: ExperimentProfile,
+    payload: MessagePayload,
+    clock: Clock | None,
+) -> tuple[dict[str, Any], dict[str, Any], PreparedCommit] | PreparedCommit:
+    request_hash = message_request_hash(payload)
+    now = utc_now(clock).isoformat()
+    current_seq_row = connection.execute(
+        "SELECT COALESCE(MAX(conversation_seq), 0) AS max_seq FROM messages"
+    ).fetchone()
+    current_seq = int(current_seq_row["max_seq"])
+    if (
+        payload.expected_conversation_seq is not None
+        and payload.expected_conversation_seq != current_seq
+    ):
+        raise AppError(
+            code="stale_sequence",
+            status_code=409,
+            message="Conversation sequence is stale.",
+            details={
+                "expected_conversation_seq": payload.expected_conversation_seq,
+                "actual_conversation_seq": current_seq,
+            },
+        )
+    existing_submission = connection.execute(
+        """
+        SELECT *
+        FROM submissions
+        WHERE client_message_id = ?
+        """,
+        (payload.client_message_id,),
+    ).fetchone()
+    if existing_submission is not None:
+        if existing_submission["request_hash"] != request_hash:
+            raise AppError(
+                code="idempotency_conflict",
+                status_code=409,
+                message="client_message_id already used with different payload.",
+            )
+        if existing_submission["status"] == "committed":
+            message_row = connection.execute(
+                "SELECT * FROM messages WHERE message_id = ?",
+                (existing_submission["message_id"],),
+            ).fetchone()
+            assert message_row is not None
+            message = build_message_record(message_row, connection)
+            cp_revision = get_cp_revision(conversation, message["cp_revision"])
+            return message, cp_revision, PreparedCommit(
+                request_hash=request_hash,
+                checkpoint_seq=current_seq,
+                checkpoint_revision=cp_revision["projection_revision"],
+                checkpoint_snapshot=cp_revision["snapshot"],
+                created_at=now,
+            )
+    validate_message_payload(payload, profile=profile, connection=connection)
+    enforce_episode_budget(
+        connection=connection,
+        profile=profile,
+        payload=payload,
+        now=now,
+    )
+    connection.execute(
+        """
+        INSERT INTO submissions(
+          client_message_id, request_hash, content_markdown, mentions_json,
+          primary_reply_to, responds_to_json, status, error_code, error_message,
+          message_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(client_message_id) DO UPDATE SET
+          request_hash=excluded.request_hash,
+          content_markdown=excluded.content_markdown,
+          mentions_json=excluded.mentions_json,
+          primary_reply_to=excluded.primary_reply_to,
+          responds_to_json=excluded.responds_to_json,
+          status=excluded.status,
+          error_code=excluded.error_code,
+          error_message=excluded.error_message,
+          updated_at=excluded.updated_at
+        """,
+        (
+            payload.client_message_id,
+            request_hash,
+            payload.content_markdown,
+            json.dumps(payload.mentions),
+            payload.primary_reply_to,
+            json.dumps(payload.responds_to),
+            "pending",
+            None,
+            None,
+            None,
+            now,
+            now,
+        ),
+    )
+    current_revision, current_snapshot = fetch_latest_cp_snapshot(connection)
+    return PreparedCommit(
+        request_hash=request_hash,
+        checkpoint_seq=current_seq,
+        checkpoint_revision=current_revision,
+        checkpoint_snapshot=current_snapshot,
+        created_at=now,
+    )
 
 
 def update_segment_with_message(
@@ -570,121 +844,47 @@ def commit_message(
     clock: Clock | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
     lock = _CONVERSATION_LOCKS[conversation.id]
-    with lock, connect_transcript(conversation) as connection:
-        connection.execute("BEGIN IMMEDIATE")
-        request_hash = message_request_hash(payload)
-        now = utc_now(clock).isoformat()
-        current_seq_row = connection.execute(
-            "SELECT COALESCE(MAX(conversation_seq), 0) AS max_seq FROM messages"
-        ).fetchone()
-        current_seq = int(current_seq_row["max_seq"])
-        if (
-            payload.expected_conversation_seq is not None
-            and payload.expected_conversation_seq != current_seq
-        ):
-            connection.rollback()
-            raise AppError(
-                code="stale_sequence",
-                status_code=409,
-                message="Conversation sequence is stale.",
-                details={
-                    "expected_conversation_seq": payload.expected_conversation_seq,
-                    "actual_conversation_seq": current_seq,
-                },
-            )
-        existing_submission = connection.execute(
-            """
-            SELECT *
-            FROM submissions
-            WHERE client_message_id = ?
-            """,
-            (payload.client_message_id,),
-        ).fetchone()
-        if existing_submission is not None:
-            if existing_submission["request_hash"] != request_hash:
-                connection.rollback()
-                raise AppError(
-                    code="idempotency_conflict",
-                    status_code=409,
-                    message="client_message_id already used with different payload.",
-                )
-            if existing_submission["status"] == "committed":
-                message_row = connection.execute(
-                    "SELECT * FROM messages WHERE message_id = ?",
-                    (existing_submission["message_id"],),
-                ).fetchone()
-                assert message_row is not None
-                message = build_message_record(message_row, connection)
-                cp_revision = get_cp_revision(conversation, message["cp_revision"])
-                connection.commit()
-                return message, cp_revision, []
-        validate_message_payload(payload, profile=profile, connection=connection)
-        enforce_episode_budget(
-            connection=connection,
-            profile=profile,
-            payload=payload,
-            now=now,
-        )
-        connection.execute(
-            """
-            INSERT INTO submissions(
-              client_message_id, request_hash, content_markdown, mentions_json,
-              primary_reply_to, responds_to_json, status, error_code, error_message,
-              message_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(client_message_id) DO UPDATE SET
-              request_hash=excluded.request_hash,
-              content_markdown=excluded.content_markdown,
-              mentions_json=excluded.mentions_json,
-              primary_reply_to=excluded.primary_reply_to,
-              responds_to_json=excluded.responds_to_json,
-              status=excluded.status,
-              error_code=excluded.error_code,
-              error_message=excluded.error_message,
-              updated_at=excluded.updated_at
-            """,
-            (
-                payload.client_message_id,
-                request_hash,
-                payload.content_markdown,
-                json.dumps(payload.mentions),
-                payload.primary_reply_to,
-                json.dumps(payload.responds_to),
-                "pending",
-                None,
-                None,
-                None,
-                now,
-                now,
-            ),
-        )
-        next_seq = current_seq + 1
-        current_revision, current_snapshot = fetch_latest_cp_snapshot(connection)
-        try:
-            next_revision, snapshot = apply_projection(
+    while True:
+        with lock, connect_transcript(conversation) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            prepared = _prepare_commit(
+                connection,
+                conversation=conversation,
                 profile=profile,
-                content_markdown=payload.content_markdown,
-                primary_reply_to=payload.primary_reply_to,
-                mentions=payload.mentions,
-                current_revision=current_revision,
-                current_snapshot=current_snapshot,
+                payload=payload,
+                clock=clock,
+            )
+            if isinstance(prepared, tuple):
+                connection.commit()
+                return prepared[0], prepared[1], []
+            connection.commit()
+
+        try:
+            projection_result = apply_projection(
+                conversation,
+                profile=profile,
+                payload=payload,
+                current_revision=prepared.checkpoint_revision,
+                current_snapshot=prepared.checkpoint_snapshot,
             )
         except ProjectionError as exc:
-            connection.execute(
-                """
-                UPDATE submissions
-                SET status = ?, error_code = ?, error_message = ?, updated_at = ?
-                WHERE client_message_id = ?
-                """,
-                (
-                    "failed",
-                    "CP_FAILED",
-                    str(exc),
-                    now,
-                    payload.client_message_id,
-                ),
-            )
-            connection.commit()
+            with lock, connect_transcript(conversation) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    """
+                    UPDATE submissions
+                    SET status = ?, error_code = ?, error_message = ?, updated_at = ?
+                    WHERE client_message_id = ?
+                    """,
+                    (
+                        "failed",
+                        "CP_FAILED",
+                        str(exc),
+                        prepared.created_at,
+                        payload.client_message_id,
+                    ),
+                )
+                connection.commit()
             raise AppError(
                 code="projection_failed",
                 status_code=409,
@@ -692,175 +892,219 @@ def commit_message(
                 details={"reason": str(exc)},
             ) from exc
 
-        message_id = generate_ulid()
-        snapshot = update_segment_with_message(
-            snapshot,
-            message_id=message_id,
-            conversation_seq=next_seq,
-            content_markdown=payload.content_markdown,
-        )
-        content_hash = sha256(payload.content_markdown.encode("utf-8")).hexdigest()
-        connection.execute(
-            """
-            INSERT INTO messages(
-              message_id, conversation_seq, sender_kind, sender_id, content_markdown,
-              primary_reply_to, causal_episode_id, caused_by_message_id, agent_hop,
-              client_message_id, idempotency_key, server_received_at, committed_at,
-              cp_revision, content_hash
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                message_id,
-                next_seq,
-                payload.sender_kind,
-                payload.sender_id,
-                payload.content_markdown,
-                payload.primary_reply_to,
-                payload.causal_episode_id,
-                payload.caused_by_message_id or payload.primary_reply_to,
-                payload.agent_hop,
-                payload.client_message_id,
-                payload.idempotency_key or payload.client_message_id,
-                now,
-                now,
-                next_revision,
-                content_hash,
-            ),
-        )
-        for mention in payload.mentions:
-            connection.execute(
-                """
-                INSERT INTO message_mentions(message_id, member_id)
-                VALUES (?, ?)
-                """,
-                (message_id, mention),
+        with lock, connect_transcript(conversation) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current_seq_row = connection.execute(
+                "SELECT COALESCE(MAX(conversation_seq), 0) AS max_seq FROM messages"
+            ).fetchone()
+            current_seq = int(current_seq_row["max_seq"])
+            current_revision, _ = fetch_latest_cp_snapshot(connection)
+            if (
+                current_seq != prepared.checkpoint_seq
+                or current_revision != prepared.checkpoint_revision
+            ):
+                if payload.expected_conversation_seq is None:
+                    connection.commit()
+                    continue
+                connection.execute(
+                    """
+                    UPDATE submissions
+                    SET status = ?, error_code = ?, error_message = ?, updated_at = ?
+                    WHERE client_message_id = ?
+                    """,
+                    (
+                        "failed",
+                        "CP_STALE",
+                        "Projection checkpoint became stale before commit.",
+                        prepared.created_at,
+                        payload.client_message_id,
+                    ),
+                )
+                connection.commit()
+                raise AppError(
+                    code="projection_stale",
+                    status_code=409,
+                    message="Projection checkpoint became stale before commit.",
+                    details={
+                        "checkpoint_seq": prepared.checkpoint_seq,
+                        "current_seq": current_seq,
+                        "checkpoint_revision": prepared.checkpoint_revision,
+                        "current_revision": current_revision,
+                    },
+                )
+
+            now = prepared.created_at
+            next_seq = current_seq + 1
+            message_id = generate_ulid()
+            snapshot = update_segment_with_message(
+                projection_result.snapshot,
+                message_id=message_id,
+                conversation_seq=next_seq,
+                content_markdown=payload.content_markdown,
             )
-        for ordinal, reply_to in enumerate(payload.responds_to, start=1):
+            content_hash = sha256(payload.content_markdown.encode("utf-8")).hexdigest()
             connection.execute(
                 """
-                INSERT INTO message_response_refs(message_id, responds_to_message_id, ordinal)
-                VALUES (?, ?, ?)
-                """,
-                (message_id, reply_to, ordinal),
-            )
-        connection.execute(
-            """
-            INSERT INTO cp_revisions(
-              projection_revision, covered_through_seq, strategy_id, strategy_version,
-              snapshot_json, trace_ref, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                next_revision,
-                next_seq,
-                profile.modules["projection"].module_id,
-                "1.0.0",
-                json.dumps(snapshot, ensure_ascii=False, sort_keys=True),
-                f"trace://projection/{next_revision}",
-                now,
-            ),
-        )
-        connection.execute(
-            """
-            UPDATE submissions
-            SET status = ?, error_code = NULL, error_message = NULL, message_id = ?, updated_at = ?
-            WHERE client_message_id = ?
-            """,
-            ("committed", message_id, now, payload.client_message_id),
-        )
-        record_episode_budget(
-            connection=connection,
-            profile=profile,
-            payload=payload,
-            now=now,
-        )
-        outbox_events = [
-            (
-                generate_ulid(),
-                "submission.status_changed",
-                None,
-                {
-                    "client_message_id": payload.client_message_id,
-                    "status": "committed",
-                    "message_id": message_id,
-                },
-            ),
-            (
-                generate_ulid(),
-                "message.committed",
-                next_seq,
-                {
-                    "message": {
-                        "message_id": message_id,
-                        "conversation_seq": next_seq,
-                        "sender_kind": payload.sender_kind,
-                        "sender_id": payload.sender_id,
-                        "content_markdown": payload.content_markdown,
-                        "mentions": payload.mentions,
-                        "primary_reply_to": payload.primary_reply_to,
-                        "responds_to": payload.responds_to,
-                        "client_message_id": payload.client_message_id,
-                        "causal_episode_id": payload.causal_episode_id,
-                        "caused_by_message_id": payload.caused_by_message_id,
-                        "agent_hop": payload.agent_hop,
-                        "committed_at": now,
-                        "cp_revision": next_revision,
-                    }
-                },
-            ),
-            (
-                generate_ulid(),
-                "cp.revision_committed",
-                next_seq,
-                {
-                    "cp_revision": {
-                        "projection_revision": next_revision,
-                        "covered_through_seq": next_seq,
-                        "strategy_id": profile.modules["projection"].module_id,
-                        "strategy_version": "1.0.0",
-                        "snapshot": snapshot,
-                        "created_at": now,
-                    }
-                },
-            ),
-        ]
-        for event_id, event_type, conversation_seq, event_payload in outbox_events:
-            connection.execute(
-                """
-                INSERT INTO outbox_events(
-                  event_id, event_type, conversation_seq, payload_json, status,
-                  dispatch_attempts, dispatched_at, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO messages(
+                  message_id, conversation_seq, sender_kind, sender_id, content_markdown,
+                  primary_reply_to, causal_episode_id, caused_by_message_id, agent_hop,
+                  client_message_id, idempotency_key, server_received_at, committed_at,
+                  cp_revision, content_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    event_id,
-                    event_type,
-                    conversation_seq,
-                    json.dumps(event_payload, ensure_ascii=False, sort_keys=True),
-                    "pending",
-                    0,
-                    None,
+                    message_id,
+                    next_seq,
+                    payload.sender_kind,
+                    payload.sender_id,
+                    payload.content_markdown,
+                    payload.primary_reply_to,
+                    payload.causal_episode_id,
+                    payload.caused_by_message_id or payload.primary_reply_to,
+                    payload.agent_hop,
+                    payload.client_message_id,
+                    payload.idempotency_key or payload.client_message_id,
+                    now,
+                    now,
+                    projection_result.next_revision,
+                    content_hash,
+                ),
+            )
+            for mention in payload.mentions:
+                connection.execute(
+                    """
+                    INSERT INTO message_mentions(message_id, member_id)
+                    VALUES (?, ?)
+                    """,
+                    (message_id, mention),
+                )
+            for ordinal, reply_to in enumerate(payload.responds_to, start=1):
+                connection.execute(
+                    """
+                    INSERT INTO message_response_refs(message_id, responds_to_message_id, ordinal)
+                    VALUES (?, ?, ?)
+                    """,
+                    (message_id, reply_to, ordinal),
+                )
+            connection.execute(
+                """
+                INSERT INTO cp_revisions(
+                  projection_revision, covered_through_seq, strategy_id, strategy_version,
+                  snapshot_json, trace_ref, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    projection_result.next_revision,
+                    next_seq,
+                    profile.modules["projection"].module_id,
+                    "1.0.0",
+                    json.dumps(snapshot, ensure_ascii=False, sort_keys=True),
+                    f"trace://projection/{projection_result.next_revision}",
                     now,
                 ),
             )
-        message_row = connection.execute(
-            "SELECT * FROM messages WHERE message_id = ?",
-            (message_id,),
-        ).fetchone()
-        assert message_row is not None
-        message = build_message_record(message_row, connection)
-        cp_revision = {
-            "projection_revision": next_revision,
-            "covered_through_seq": next_seq,
-            "strategy_id": profile.modules["projection"].module_id,
-            "strategy_version": "1.0.0",
-            "snapshot": snapshot,
-            "trace_ref": f"trace://projection/{next_revision}",
-            "created_at": now,
-        }
-        connection.commit()
-    events = dispatch_pending_outbox(conversation, clock=clock)
-    return message, cp_revision, events
+            connection.execute(
+                """
+                UPDATE submissions
+                SET status = ?, error_code = NULL, error_message = NULL,
+                    message_id = ?, updated_at = ?
+                WHERE client_message_id = ?
+                """,
+                ("committed", message_id, now, payload.client_message_id),
+            )
+            record_episode_budget(
+                connection=connection,
+                profile=profile,
+                payload=payload,
+                now=now,
+            )
+            outbox_events = [
+                (
+                    generate_ulid(),
+                    "submission.status_changed",
+                    None,
+                    {
+                        "client_message_id": payload.client_message_id,
+                        "status": "committed",
+                        "message_id": message_id,
+                    },
+                ),
+                (
+                    generate_ulid(),
+                    "message.committed",
+                    next_seq,
+                    {
+                        "message": {
+                            "message_id": message_id,
+                            "conversation_seq": next_seq,
+                            "sender_kind": payload.sender_kind,
+                            "sender_id": payload.sender_id,
+                            "content_markdown": payload.content_markdown,
+                            "mentions": payload.mentions,
+                            "primary_reply_to": payload.primary_reply_to,
+                            "responds_to": payload.responds_to,
+                            "client_message_id": payload.client_message_id,
+                            "causal_episode_id": payload.causal_episode_id,
+                            "caused_by_message_id": payload.caused_by_message_id,
+                            "agent_hop": payload.agent_hop,
+                            "committed_at": now,
+                            "cp_revision": projection_result.next_revision,
+                        }
+                    },
+                ),
+                (
+                    generate_ulid(),
+                    "cp.revision_committed",
+                    next_seq,
+                    {
+                        "cp_revision": {
+                            "projection_revision": projection_result.next_revision,
+                            "covered_through_seq": next_seq,
+                            "strategy_id": profile.modules["projection"].module_id,
+                            "strategy_version": "1.0.0",
+                            "snapshot": snapshot,
+                            "created_at": now,
+                        }
+                    },
+                ),
+            ]
+            for event_id, event_type, conversation_seq, event_payload in outbox_events:
+                connection.execute(
+                    """
+                    INSERT INTO outbox_events(
+                      event_id, event_type, conversation_seq, payload_json, status,
+                      dispatch_attempts, dispatched_at, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event_id,
+                        event_type,
+                        conversation_seq,
+                        json.dumps(event_payload, ensure_ascii=False, sort_keys=True),
+                        "pending",
+                        0,
+                        None,
+                        now,
+                    ),
+                )
+            message_row = connection.execute(
+                "SELECT * FROM messages WHERE message_id = ?",
+                (message_id,),
+            ).fetchone()
+            assert message_row is not None
+            message = build_message_record(message_row, connection)
+            cp_revision = {
+                "projection_revision": projection_result.next_revision,
+                "covered_through_seq": next_seq,
+                "strategy_id": profile.modules["projection"].module_id,
+                "strategy_version": "1.0.0",
+                "snapshot": snapshot,
+                "trace_ref": f"trace://projection/{projection_result.next_revision}",
+                "created_at": now,
+            }
+            connection.commit()
+        events = dispatch_pending_outbox(conversation, clock=clock)
+        return message, cp_revision, events
 
 
 def retry_submission(

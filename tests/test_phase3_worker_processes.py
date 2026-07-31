@@ -260,12 +260,26 @@ def budget_ledger(conversation_id: str) -> dict[str, Any]:
     rows = fetch_rows(
         conversation_id,
         """
-        SELECT conversation_id, used_llm_calls, used_total_tokens, used_total_cost_usd
+        SELECT conversation_id, used_llm_calls, used_total_tokens,
+               reserved_total_tokens, used_total_cost_usd
         FROM conversation_budget_ledger
         """
     )
     assert len(rows) == 1
     return dict(rows[0])
+
+
+def admission_rows(conversation_id: str) -> list[dict[str, Any]]:
+    rows = fetch_rows(
+        conversation_id,
+        """
+        SELECT owner_kind, owner_id, run_id, agent_id, phase, decision,
+               reason_code, reserved_tokens, created_at
+        FROM llm_admission_events
+        ORDER BY created_at, admission_id
+        """,
+    )
+    return [dict(row) for row in rows]
 
 
 def h06_trace(
@@ -1003,14 +1017,16 @@ def test_h11_live_retryable_attempts_are_persisted_and_eventually_commit(
 
     attempts = attempt_rows(conversation_id)
     assert [(row["phase"], row["status"]) for row in attempts] == [
+        ("projection", "succeeded"),
         ("decision", "failed"),
         ("decision", "failed"),
         ("decision", "succeeded"),
         ("action", "succeeded"),
+        ("projection", "succeeded"),
     ]
-    assert [row["error_class"] for row in attempts[:2]] == ["http_429", "http_5xx"]
-    assert [row["retryable"] for row in attempts[:2]] == [1, 1]
-    assert [row["backoff_ms"] for row in attempts[:2]] == [200, 300]
+    assert [row["error_class"] for row in attempts[1:3]] == ["http_429", "http_5xx"]
+    assert [row["retryable"] for row in attempts[1:3]] == [1, 1]
+    assert [row["backoff_ms"] for row in attempts[1:3]] == [200, 300]
     assert run_statuses(conversation_id) == ["COMMITTED"]
     wait_until(lambda: agent_is_listening(conversation_id, "agent-a"))
     runtime_state = runtime_state_for_agent(conversation_id, "agent-a")
@@ -1056,11 +1072,12 @@ def test_h11_live_non_retryable_failure_converges_without_public_commit(
 
     attempts = attempt_rows(conversation_id)
     assert [(row["phase"], row["status"]) for row in attempts] == [
+        ("projection", "succeeded"),
         ("decision", "succeeded"),
         ("action", "failed"),
     ]
-    assert attempts[1]["error_class"] == "non_retryable"
-    assert attempts[1]["retryable"] == 0
+    assert attempts[2]["error_class"] == "non_retryable"
+    assert attempts[2]["retryable"] == 0
     assert agent_messages(live_process_server.client, conversation_id) == []
     wait_until(lambda: agent_is_listening(conversation_id, "agent-a"))
     runtime_state = runtime_state_for_agent(conversation_id, "agent-a")
@@ -1102,7 +1119,7 @@ def test_h16_live_conversation_budgets_reject_followup_attempts_without_commit(
             },
         ],
         timing={"base_wait_ms": 0, "per_char_wait_ms": 0},
-        guardrails_patch={"max_llm_calls": 2, "max_total_tokens": 20},
+        guardrails_patch={"max_llm_calls": 3, "max_total_tokens": 200},
     )
     submit_user_message(
         live_process_server.client,
@@ -1115,14 +1132,23 @@ def test_h16_live_conversation_budgets_reject_followup_attempts_without_commit(
 
     attempts = attempt_rows(conversation_id)
     assert [(row["phase"], row["status"]) for row in attempts] == [
+        ("projection", "succeeded"),
         ("decision", "failed"),
         ("decision", "succeeded"),
+    ]
+    admissions = admission_rows(conversation_id)
+    assert [(row["phase"], row["decision"]) for row in admissions] == [
+        ("projection", "admitted"),
+        ("decision", "admitted"),
+        ("decision", "admitted"),
         ("action", "rejected"),
     ]
+    assert admissions[-1]["reason_code"] == "budget_exhausted"
     assert agent_messages(live_process_server.client, conversation_id) == []
     ledger = budget_ledger(conversation_id)
-    assert ledger["used_llm_calls"] == 2
-    assert ledger["used_total_tokens"] >= 20
+    assert ledger["used_llm_calls"] == 3
+    assert ledger["used_total_tokens"] > 0
+    assert ledger["reserved_total_tokens"] == 0
     wait_until(lambda: agent_is_listening(conversation_id, "agent-a"))
     runtime_state = runtime_state_for_agent(conversation_id, "agent-a")
     assert runtime_state is not None

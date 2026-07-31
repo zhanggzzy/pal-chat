@@ -20,7 +20,7 @@ import httpx
 
 from pal_chat_server.contracts import ModelRequest
 from pal_chat_server.private_runtime import PrivateRuntimeStore
-from pal_chat_server.scripted_adapter import ScriptedModelAdapter, ScriptedStep
+from pal_chat_server.scripted_adapter import ScriptedStep
 
 
 @dataclass(slots=True)
@@ -49,6 +49,7 @@ class WorkerState:
     typing_active: bool = False
     pause_requested: bool = False
     episode_root_message_ids: dict[str, str] = field(default_factory=dict)
+    model_call_count: int = 0
 
 
 class PhaseExecutionError(Exception):
@@ -194,6 +195,33 @@ def action_request(agent_id: str, decision_payload: dict[str, Any]) -> ModelRequ
     )
 
 
+def reconsideration_request(
+    agent_id: str,
+    *,
+    latest_seq: int,
+    stale_after_seq: int,
+    draft: dict[str, Any],
+) -> ModelRequest:
+    return ModelRequest(
+        purpose="reconsideration",
+        system_prompt="",
+        messages=[
+            {
+                "content": json.dumps(
+                    {
+                        "latest_conversation_seq": latest_seq,
+                        "stale_after_seq": stale_after_seq,
+                        "draft": draft,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            }
+        ],
+        metadata={"agent_id": agent_id},
+    )
+
+
 def serialized_output(step: ScriptedStep) -> str:
     if step.output_json is not None:
         return json.dumps(step.output_json, ensure_ascii=False, sort_keys=True)
@@ -318,7 +346,6 @@ def run_worker() -> None:
 
     runtime_payload = fetch_runtime_snapshot(client, config)
     script = select_script(runtime_payload)
-    adapter = ScriptedModelAdapter(script)
     state = WorkerState(
         reliable_seq=int(
             runtime_payload.get("reliable_seq", runtime_payload["latest_conversation_seq"])
@@ -471,6 +498,23 @@ def run_worker() -> None:
         )
         response.raise_for_status()
 
+    def select_preflight_step(request: ModelRequest, call_index: int) -> ScriptedStep | None:
+        haystack = "\n".join(message["content"] for message in request.messages)
+        return next(
+            (
+                step
+                for step in script
+                if (step.purpose is None or step.purpose == request.purpose)
+                and (
+                    step.agent_id is None
+                    or step.agent_id == str(request.metadata.get("agent_id", ""))
+                )
+                and (step.call_index is None or step.call_index == call_index)
+                and (step.match_contains is None or step.match_contains in haystack)
+            ),
+            None,
+        )
+
     def handle_selected_step(step: ScriptedStep) -> None:
         if step.fail_code == "WORKER_CRASHED":
             os._exit(90)
@@ -522,62 +566,63 @@ def run_worker() -> None:
         while True:
             assert state.active_run_id is not None
             run_id = str(state.active_run_id)
-            registered = register_attempt(
-                run_id=run_id,
-                phase=phase,
-                bundle_revision=bundle_revision,
-                memory_revision_before=memory_revision_before,
-                staged_memory_revision=staged_memory_revision,
-                payload={"purpose": request.purpose, "retry_index": retry_index},
+            call_index = state.model_call_count + 1
+            preflight_step = select_preflight_step(request, call_index)
+            if preflight_step is not None:
+                handle_selected_step(preflight_step)
+            request_payload = request.model_copy(
+                update={
+                    "metadata": {
+                        **request.metadata,
+                        "agent_id": config.agent_id,
+                        "call_index": call_index,
+                        "fallback_payload": fallback_payload or {},
+                    }
+                }
             )
-            attempt_id = str(registered["attempt_id"])
-            if not bool(registered.get("admitted", False)):
-                error = cast(dict[str, Any], registered.get("error") or {})
-                raise AttemptBudgetRejectedError(
-                    error_code=str(error.get("code", "budget_exhausted")),
-                    error_message=str(
-                        error.get("message", "Conversation LLM budget exhausted.")
-                    ),
-                )
-            step = adapter.select_step(request)
-            handle_selected_step(step)
-            if step.delay_ms > 0:
-                advance_with_pump(step.delay_ms)
-            if stop_event.is_set() or state.paused or state.active_run_id is None:
-                finalize_attempt(
-                    run_id,
-                    attempt_id,
-                    status="cancelled",
-                    error_code="interrupted",
-                    error_message="Attempt interrupted before completion.",
-                    error_class="interrupted",
-                    prompt_tokens=len(haystack),
-                    completion_tokens=0,
-                    total_tokens=len(haystack),
-                )
-                raise PhaseExecutionError(
-                    error_code="interrupted",
-                    error_message="Attempt interrupted before completion.",
-                )
-            if step.fail_code is not None:
-                error_class, error_message, retryable, backoff_ms = classify_failure(
-                    step.fail_code,
-                    retry_index=retry_index,
-                )
-                finalize_attempt(
-                    run_id,
-                    attempt_id,
-                    status="failed",
-                    payload={"fail_code": step.fail_code},
-                    error_code=step.fail_code.lower(),
-                    error_message=error_message,
-                    error_class=error_class,
-                    retryable=retryable,
-                    backoff_ms=backoff_ms,
-                    prompt_tokens=len(haystack),
-                    completion_tokens=0,
-                    total_tokens=len(haystack),
-                )
+            response = client.post(
+                f"{config.server_base_url}/internal/v1/conversations/{config.conversation_id}/model-invocations",
+                headers=auth_headers(config),
+                json={
+                    "request": request_payload.model_dump(mode="json"),
+                    "context": {
+                        "owner_kind": "agent_run",
+                        "owner_id": run_id,
+                        "run_id": run_id,
+                        "agent_id": config.agent_id,
+                        "phase": phase,
+                        "profile_hash": config.profile_hash,
+                        "bundle_revision": bundle_revision,
+                        "memory_revision_before": memory_revision_before,
+                        "staged_memory_revision": staged_memory_revision,
+                        "payload": {"purpose": request.purpose, "retry_index": retry_index},
+                        "estimated_input_tokens": max(1, len(haystack) // 4),
+                        "max_output_tokens": int(request.max_tokens),
+                    },
+                    "repair_enabled": True,
+                },
+            )
+            response.raise_for_status()
+            result = response.json()
+            result = result if isinstance(result, dict) else {}
+            state.model_call_count += int(result.get("consumed_call_count", 0))
+            if not bool(result.get("ok", False)):
+                if not bool(result.get("admitted", False)):
+                    error = result
+                    raise AttemptBudgetRejectedError(
+                        error_code=str(error.get("error_code", "budget_exhausted")),
+                        error_message=str(
+                            error.get("error_message", "Conversation LLM budget exhausted.")
+                        ),
+                    )
+                error_code = str(result.get("error_code", "model_error"))
+                if error_code == "WORKER_CRASHED":
+                    os._exit(90)
+                if error_code == "WORKER_CRASHED_FATAL":
+                    os._exit(91)
+                retryable = bool(result.get("retryable", False))
+                backoff_ms = int(result.get("backoff_ms", 0))
+                error_message = str(result.get("error_message", "Model request failed."))
                 if retryable:
                     retry_index += 1
                     if backoff_ms > 0:
@@ -589,23 +634,104 @@ def run_worker() -> None:
                             )
                     continue
                 raise PhaseExecutionError(
-                    error_code=step.fail_code.lower(),
+                    error_code=error_code,
                     error_message=error_message,
                 )
-            payload = step.output_json or fallback_payload or {}
-            output_text = serialized_output(step)
-            prompt_tokens = len(haystack)
-            completion_tokens = len(output_text)
-            finalize_attempt(
-                run_id,
-                attempt_id,
-                status="succeeded",
-                payload=payload,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=prompt_tokens + completion_tokens,
+            return cast(dict[str, Any], result.get("payload") or {})
+
+    def invalidate_active_run(
+        phase: str,
+        *,
+        decision_trace: dict[str, Any] | None = None,
+        action_trace: dict[str, Any] | None = None,
+        reason: str,
+    ) -> None:
+        if state.active_run_id is None:
+            return
+        extra: dict[str, Any] = {}
+        if decision_trace is not None:
+            extra["decision_json"] = decision_trace
+        if action_trace is not None:
+            extra["draft_message_json"] = action_trace
+        post_status("INVALIDATED", phase, state.active_run_id, extra=extra)
+        set_typing(False, state.active_run_id, reason)
+        state.active_run_id = None
+        post_worker_state("LISTENING")
+
+    def run_reconsideration(
+        *,
+        decision_trace: dict[str, Any],
+        action_trace: dict[str, Any],
+        draft: dict[str, Any],
+    ) -> bool:
+        if state.active_run_id is None:
+            return False
+        request = reconsideration_request(
+            config.agent_id,
+            latest_seq=state.reliable_seq,
+            stale_after_seq=state.expected_conversation_seq or 0,
+            draft=draft,
+        )
+        try:
+            result = run_model_phase(
+                phase="reconsideration",
+                request=request,
+                bundle_revision=action_bundle["revision"],
+                memory_revision_before=str(current_memory["revision"]),
+                staged_memory_revision=(
+                    None if staged_combined is None else str(staged_combined["revision"])
+                ),
+                fallback_payload={"should_continue": False, "reason": "stale"},
             )
-            return payload
+        except AttemptBudgetRejectedError as exc:
+            post_status(
+                "BUDGET_EXHAUSTED",
+                "RECONSIDERING",
+                state.active_run_id,
+                extra={
+                    "decision_json": decision_trace,
+                    "draft_message_json": action_trace,
+                    "error_code": exc.error_code,
+                    "error_message": exc.error_message,
+                },
+            )
+            set_typing(False, state.active_run_id, "budget-exhausted")
+            state.active_run_id = None
+            post_worker_state("LISTENING")
+            return False
+        except PhaseExecutionError as exc:
+            post_status(
+                "FATAL",
+                "RECONSIDERING",
+                state.active_run_id,
+                extra={
+                    "decision_json": decision_trace,
+                    "draft_message_json": action_trace,
+                    "error_code": exc.error_code,
+                    "error_message": exc.error_message,
+                },
+            )
+            set_typing(False, state.active_run_id, "fatal")
+            state.active_run_id = None
+            post_worker_state("LISTENING")
+            return False
+        if state.active_run_id is None:
+            return False
+        if not bool(result.get("should_continue", False)):
+            invalidate_active_run(
+                "RECONSIDER_BEFORE_SEND",
+                decision_trace=decision_trace,
+                action_trace=action_trace,
+                reason="reconsidered-stale",
+            )
+            return False
+        state.expected_conversation_seq = max(
+            state.reliable_seq,
+            state.dirty_since_seq or 0,
+            state.expected_conversation_seq or 0,
+        )
+        state.dirty_since_seq = None
+        return True
 
     def process_runtime_event(event: dict[str, Any]) -> None:
         event_type = event.get("event_type")
@@ -940,20 +1066,34 @@ def run_worker() -> None:
                 and not all_mention
             )
         ):
-            post_status(
-                "INVALIDATED",
-                "RECONSIDER_BEFORE_SEND",
-                state.active_run_id,
-                extra={
-                    "decision_json": decision_trace,
-                    "draft_message_json": action_trace,
-                },
-            )
-            set_typing(False, state.active_run_id, "invalidated")
-            state.active_run_id = None
-            post_worker_state("LISTENING")
-            continue
+            if (
+                state.active_run_id is not None
+                and state.dirty_since_seq is not None
+                and state.dirty_since_seq > (state.expected_conversation_seq or 0)
+                and not all_mention
+            ):
+                if not run_reconsideration(
+                    decision_trace=decision_trace,
+                    action_trace=action_trace,
+                    draft=draft,
+                ):
+                    state.expected_conversation_seq = None
+                    state.dirty_since_seq = None
+                    state.pending_roots.clear()
+                    continue
+            else:
+                invalidate_active_run(
+                    "RECONSIDER_BEFORE_SEND",
+                    decision_trace=decision_trace,
+                    action_trace=action_trace,
+                    reason="invalidated",
+                )
+                state.expected_conversation_seq = None
+                state.dirty_since_seq = None
+                state.pending_roots.clear()
+                continue
 
+        all_mention_submit_retries = 0
         while True:
             response = client.post(
                 f"{config.server_base_url}/internal/v1/conversations/{config.conversation_id}/agent-actions",
@@ -973,23 +1113,43 @@ def run_worker() -> None:
             )
             if response.status_code == 409:
                 error = response.json()["error"]
-                if error["code"] == "stale_sequence" and all_mention:
-                    details = error["details"]
-                    state.expected_conversation_seq = int(details["actual_conversation_seq"])
-                    continue
-                if error["code"] == "stale_sequence":
-                    post_status(
-                        "INVALIDATED",
-                        "RECONSIDER_BEFORE_SEND",
-                        state.active_run_id,
-                        extra={
-                            "decision_json": decision_trace,
-                            "draft_message_json": action_trace,
-                        },
+                details = error.get("details") or {}
+                conflict_seq = None
+                if isinstance(details, dict):
+                    raw_conflict_seq = details.get(
+                        "actual_conversation_seq",
+                        details.get("current_seq"),
                     )
-                    set_typing(False, state.active_run_id, "stale-sequence")
-                    state.active_run_id = None
-                    post_worker_state("LISTENING")
+                    if raw_conflict_seq is not None:
+                        conflict_seq = int(raw_conflict_seq)
+                if conflict_seq is not None and all_mention:
+                    all_mention_submit_retries += 1
+                    if all_mention_submit_retries > 3:
+                        invalidate_active_run(
+                            "SUBMITTING",
+                            decision_trace=decision_trace,
+                            action_trace=action_trace,
+                            reason="all-mention-conflict-exhausted",
+                        )
+                        break
+                    state.expected_conversation_seq = conflict_seq
+                    continue
+                if conflict_seq is not None:
+                    state.dirty_since_seq = conflict_seq
+                    if run_reconsideration(
+                        decision_trace=decision_trace,
+                        action_trace=action_trace,
+                        draft=draft,
+                    ):
+                        continue
+                    break
+                if error["code"] == "conversation_not_running":
+                    invalidate_active_run(
+                        "PAUSED" if state.paused else "SUBMITTING",
+                        decision_trace=decision_trace,
+                        action_trace=action_trace,
+                        reason="conversation-not-running",
+                    )
                     break
                 if error["code"] == "budget_exhausted":
                     post_status(
@@ -1005,6 +1165,28 @@ def run_worker() -> None:
                     state.active_run_id = None
                     post_worker_state("LISTENING")
                     break
+                if all_mention:
+                    all_mention_submit_retries += 1
+                    if all_mention_submit_retries > 3:
+                        invalidate_active_run(
+                            "SUBMITTING",
+                            decision_trace=decision_trace,
+                            action_trace=action_trace,
+                            reason=f"all-mention-{error['code']}",
+                        )
+                        break
+                    latest_runtime = fetch_runtime_snapshot(client, config)
+                    state.expected_conversation_seq = int(
+                        latest_runtime.get("latest_conversation_seq", state.reliable_seq)
+                    )
+                    continue
+                invalidate_active_run(
+                    "SUBMITTING",
+                    decision_trace=decision_trace,
+                    action_trace=action_trace,
+                    reason=f"conflict-{error['code']}",
+                )
+                break
             response.raise_for_status()
             break
 

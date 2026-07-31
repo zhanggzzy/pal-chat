@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import time
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from typing import Any, cast
 
 from fastapi.testclient import TestClient
 from pal_chat_server.db import get_session_factory
-from pal_chat_server.sequence_runtime import dispatch_pending_outbox
+from pal_chat_server.errors import AppError
+from pal_chat_server.schemas import ExperimentProfile
+from pal_chat_server.sequence_runtime import (
+    MessagePayload,
+    commit_message,
+    connect_transcript,
+    dispatch_pending_outbox,
+)
 from pal_chat_server.services import get_conversation_or_404
 
 
@@ -62,6 +70,17 @@ def submit_message(
             "responds_to": responds_to or [],
         },
     )
+
+
+def load_record_and_profile(
+    conversation_id: str,
+) -> tuple[Any, ExperimentProfile]:
+    session_factory = get_session_factory()
+    with session_factory() as db:
+        record = get_conversation_or_404(db, conversation_id)
+        profile = ExperimentProfile.model_validate(record.locked_profile_json)
+        db.expunge(record)
+    return record, profile
 
 
 def test_h01_duplicate_message_request_is_idempotent(migrated_app: TestClient) -> None:
@@ -275,3 +294,307 @@ def test_h13_reconnect_replays_missing_events_without_duplicate_dispatch(
     backfill = migrated_app.get(f"/api/v1/conversations/{conversation_id}/messages?after_seq=1")
     assert backfill.status_code == 200
     assert [item["conversation_seq"] for item in backfill.json()["items"]] == [2]
+
+
+def test_projection_without_expected_seq_recomputes_after_stale_checkpoint(
+    migrated_app: TestClient,
+) -> None:
+    profile = default_profile_payload(migrated_app)
+    modules = cast(dict[str, dict[str, Any]], profile["modules"])
+    modules["projection"] = {
+        "module_id": "projection.segment-chain",
+        "config": {
+            "script": [
+                {
+                    "purpose": "projection",
+                    "match_contains": "slow",
+                    "delay_ms": 200,
+                    "output_json": {
+                        "operation": "START_NEW_SEGMENT",
+                        "segment_title": "公共消息",
+                        "updated_summary": "slow summary",
+                    },
+                }
+            ]
+        },
+    }
+    created = migrated_app.post(
+        "/api/v1/conversations",
+        json={"title": "Projection Recompute", "draft_profile": profile},
+    )
+    assert created.status_code == 201
+    conversation_id = cast(str, created.json()["id"])
+    assert migrated_app.post(f"/api/v1/conversations/{conversation_id}/validate").status_code == 200
+    assert migrated_app.post(f"/api/v1/conversations/{conversation_id}/start").status_code == 200
+
+    def slow_commit() -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+        record, locked_profile = load_record_and_profile(conversation_id)
+        return commit_message(
+            record,
+            profile=locked_profile,
+            payload=MessagePayload(
+                client_message_id="recompute-slow",
+                content_markdown="slow projection message",
+                mentions=[],
+                primary_reply_to=None,
+                responds_to=[],
+            ),
+        )
+
+    def fast_commit() -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+        time.sleep(0.05)
+        record, locked_profile = load_record_and_profile(conversation_id)
+        return commit_message(
+            record,
+            profile=locked_profile,
+            payload=MessagePayload(
+                client_message_id="recompute-fast",
+                content_markdown="fast projection message",
+                mentions=[],
+                primary_reply_to=None,
+                responds_to=[],
+            ),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        slow_future = pool.submit(slow_commit)
+        fast_future = pool.submit(fast_commit)
+        slow_result = slow_future.result()
+        fast_result = fast_future.result()
+
+    sequences = sorted([slow_result[0]["conversation_seq"], fast_result[0]["conversation_seq"]])
+    assert sequences == [1, 2]
+
+    messages = migrated_app.get(f"/api/v1/conversations/{conversation_id}/messages")
+    assert messages.status_code == 200
+    items = cast(list[dict[str, Any]], messages.json()["items"])
+    assert [item["conversation_seq"] for item in items] == [1, 2]
+
+
+def test_projection_with_expected_seq_fails_stale_without_public_commit(
+    migrated_app: TestClient,
+) -> None:
+    profile = default_profile_payload(migrated_app)
+    modules = cast(dict[str, dict[str, Any]], profile["modules"])
+    modules["projection"] = {
+        "module_id": "projection.segment-chain",
+        "config": {
+            "script": [
+                {
+                    "purpose": "projection",
+                    "match_contains": "stale",
+                    "delay_ms": 200,
+                    "output_json": {
+                        "operation": "START_NEW_SEGMENT",
+                        "segment_title": "公共消息",
+                        "updated_summary": "stale summary",
+                    },
+                }
+            ]
+        },
+    }
+    created = migrated_app.post(
+        "/api/v1/conversations",
+        json={"title": "Projection Expected Seq", "draft_profile": profile},
+    )
+    assert created.status_code == 201
+    conversation_id = cast(str, created.json()["id"])
+    assert migrated_app.post(f"/api/v1/conversations/{conversation_id}/validate").status_code == 200
+    assert migrated_app.post(f"/api/v1/conversations/{conversation_id}/start").status_code == 200
+
+    def stale_commit() -> AppError:
+        record, locked_profile = load_record_and_profile(conversation_id)
+        try:
+            commit_message(
+                record,
+                profile=locked_profile,
+                payload=MessagePayload(
+                    client_message_id="stale-explicit",
+                    content_markdown="stale candidate",
+                    mentions=[],
+                    primary_reply_to=None,
+                    responds_to=[],
+                    expected_conversation_seq=0,
+                ),
+            )
+        except AppError as exc:
+            return exc
+        raise AssertionError("expected stale projection failure")
+
+    def winner_commit() -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+        time.sleep(0.05)
+        record, locked_profile = load_record_and_profile(conversation_id)
+        return commit_message(
+            record,
+            profile=locked_profile,
+            payload=MessagePayload(
+                client_message_id="stale-winner",
+                content_markdown="winner message",
+                mentions=[],
+                primary_reply_to=None,
+                responds_to=[],
+            ),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        stale_future = pool.submit(stale_commit)
+        winner_future = pool.submit(winner_commit)
+        stale_error = stale_future.result()
+        winner_result = winner_future.result()
+
+    assert stale_error.code == "projection_stale"
+    assert winner_result[0]["conversation_seq"] == 1
+
+    messages = migrated_app.get(f"/api/v1/conversations/{conversation_id}/messages")
+    assert messages.status_code == 200
+    items = cast(list[dict[str, Any]], messages.json()["items"])
+    assert [item["client_message_id"] for item in items] == ["stale-winner"]
+
+    record, _ = load_record_and_profile(conversation_id)
+    with connect_transcript(record) as connection:
+        stale_submission = connection.execute(
+            """
+            SELECT status, error_code
+            FROM submissions
+            WHERE client_message_id = ?
+            """,
+            ("stale-explicit",),
+        ).fetchone()
+        assert stale_submission is not None
+        assert stale_submission["status"] == "failed"
+        assert stale_submission["error_code"] == "CP_STALE"
+
+
+def test_projection_stale_retry_with_same_client_message_id_accepts_new_expected_seq(
+    migrated_app: TestClient,
+) -> None:
+    profile = default_profile_payload(migrated_app)
+    modules = cast(dict[str, dict[str, Any]], profile["modules"])
+    modules["projection"] = {
+        "module_id": "projection.segment-chain",
+        "config": {
+            "script": [
+                {
+                    "purpose": "projection",
+                    "match_contains": "retry me",
+                    "delay_ms": 200,
+                    "output_json": {
+                        "operation": "START_NEW_SEGMENT",
+                        "segment_title": "公共消息",
+                        "updated_summary": "retry summary",
+                    },
+                }
+            ]
+        },
+    }
+    created = migrated_app.post(
+        "/api/v1/conversations",
+        json={"title": "Projection Retry Same Client ID", "draft_profile": profile},
+    )
+    assert created.status_code == 201
+    conversation_id = cast(str, created.json()["id"])
+    assert migrated_app.post(f"/api/v1/conversations/{conversation_id}/validate").status_code == 200
+    assert migrated_app.post(f"/api/v1/conversations/{conversation_id}/start").status_code == 200
+
+    def stale_then_retry() -> tuple[
+        AppError,
+        tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]],
+    ]:
+        record, locked_profile = load_record_and_profile(conversation_id)
+        try:
+            commit_message(
+                record,
+                profile=locked_profile,
+                payload=MessagePayload(
+                    client_message_id="retry-same-client-id",
+                    content_markdown="retry me later",
+                    mentions=[],
+                    primary_reply_to=None,
+                    responds_to=[],
+                    expected_conversation_seq=0,
+                ),
+            )
+        except AppError as exc:
+            retried_record, retried_profile = load_record_and_profile(conversation_id)
+            retried = commit_message(
+                retried_record,
+                profile=retried_profile,
+                payload=MessagePayload(
+                    client_message_id="retry-same-client-id",
+                    content_markdown="retry me later",
+                    mentions=[],
+                    primary_reply_to=None,
+                    responds_to=[],
+                    expected_conversation_seq=1,
+                ),
+            )
+            return exc, retried
+        raise AssertionError("expected initial projection_stale")
+
+    def winner_commit() -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+        time.sleep(0.05)
+        record, locked_profile = load_record_and_profile(conversation_id)
+        return commit_message(
+            record,
+            profile=locked_profile,
+            payload=MessagePayload(
+                client_message_id="retry-winner",
+                content_markdown="winner before retry",
+                mentions=[],
+                primary_reply_to=None,
+                responds_to=[],
+            ),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        stale_future = pool.submit(stale_then_retry)
+        winner_future = pool.submit(winner_commit)
+        stale_error, retry_result = stale_future.result()
+        winner_result = winner_future.result()
+
+    assert stale_error.code == "projection_stale"
+    assert winner_result[0]["conversation_seq"] == 1
+    assert retry_result[0]["conversation_seq"] == 2
+    assert retry_result[0]["client_message_id"] == "retry-same-client-id"
+
+
+def test_projection_budget_rejection_uses_degraded_cp_without_attempt(
+    migrated_app: TestClient,
+) -> None:
+    conversation = create_running_conversation(migrated_app, title="Projection Budget Reject")
+    conversation_id = cast(str, conversation["id"])
+    patched = migrated_app.patch(
+        f"/api/v1/conversations/{conversation_id}/guardrails",
+        json={"max_llm_calls": 0, "max_total_tokens": 0},
+    )
+    assert patched.status_code == 200
+
+    response = submit_message(
+        migrated_app,
+        conversation_id,
+        client_message_id="projection-budget",
+        content_markdown="仍应提交的用户消息",
+    )
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["message"]["conversation_seq"] == 1
+    assert payload["cp_revision"]["projection_revision"] == 1
+    assert payload["cp_revision"]["snapshot"]["segments"][0]["summary"] == "仍应提交的用户消息"
+
+    record, _ = load_record_and_profile(conversation_id)
+    with connect_transcript(record) as connection:
+        attempt_count = connection.execute(
+            "SELECT COUNT(*) AS count FROM llm_attempts WHERE phase = 'projection'"
+        ).fetchone()
+        admission_row = connection.execute(
+            """
+            SELECT phase, decision, reason_code
+            FROM llm_admission_events
+            WHERE phase = 'projection'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    assert attempt_count is not None and int(attempt_count["count"]) == 0
+    assert admission_row is not None
+    assert tuple(admission_row) == ("projection", "rejected", "budget_exhausted")

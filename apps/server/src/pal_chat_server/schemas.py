@@ -354,11 +354,15 @@ class RunAttemptRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     attempt_id: str
+    owner_kind: str | None = None
+    owner_id: str | None = None
     run_id: str
     agent_id: str
     phase: str
+    parent_attempt_id: str | None = None
     provider: str
     model: str
+    reserved_tokens: int | None = None
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
