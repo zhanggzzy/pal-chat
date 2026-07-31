@@ -4,6 +4,7 @@ import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from time import perf_counter
 from typing import Any, cast
 from uuid import uuid4
 
@@ -58,6 +59,18 @@ from pal_chat_server.monitoring import (
     list_runs,
 )
 from pal_chat_server.outbox_dispatcher import OutboxDispatcher
+from pal_chat_server.perf_trace import (
+    end_trace as end_perf_trace,
+)
+from pal_chat_server.perf_trace import (
+    get_trace as get_perf_trace,
+)
+from pal_chat_server.perf_trace import (
+    start_trace as start_perf_trace,
+)
+from pal_chat_server.perf_trace import (
+    timed_segment,
+)
 from pal_chat_server.schemas import (
     AgentRunListResponse,
     AgentRunRead,
@@ -156,8 +169,9 @@ from pal_chat_server.worker_supervisor import INTERNAL_SOCKET_MANAGER, WorkerSup
 
 
 def _catalog_bootstrap(db: Session, settings: Settings) -> None:
-    ensure_default_template(db)
-    sync_catalog_from_manifests(db, settings)
+    with timed_segment("catalog.bootstrap"):
+        ensure_default_template(db)
+        sync_catalog_from_manifests(db, settings)
 
 
 def _context_owner_id(context_payload: dict[str, Any]) -> str:
@@ -443,7 +457,18 @@ def create_app() -> FastAPI:
     ) -> Response:
         request_id = str(uuid4())
         request.state.request_id = request_id
+        trace_requested = request.headers.get("X-PAL-Perf-Trace", "") == "1"
+        started = perf_counter()
+        if trace_requested:
+            start_perf_trace(
+                trace_id=request_id,
+                method=request.method,
+                path=request.url.path,
+            )
         response = await call_next(request)
+        if trace_requested:
+            end_perf_trace(total_ms=(perf_counter() - started) * 1000)
+            response.headers["X-PAL-Perf-Trace"] = request_id
         response.headers["X-Request-ID"] = request_id
         return response
 
@@ -505,6 +530,87 @@ def create_app() -> FastAPI:
                 },
             )
         return HealthResponse(status="ready", schema_revision=revision)
+
+    @app.get("/api/v1/perf-traces/{trace_id}", tags=["health"])
+    def get_performance_trace(trace_id: str) -> JSONResponse:
+        trace = get_perf_trace(trace_id)
+        if trace is None:
+            raise AppError(
+                code="perf_trace_not_found",
+                status_code=404,
+                message="Performance trace was not found.",
+            )
+        return JSONResponse(trace)
+
+    @app.get("/api/v1/conversations/{conversation_id}/idle-barrier", tags=["health"])
+    def get_conversation_idle_barrier(
+        conversation_id: str,
+        db: Session = Depends(get_db_session),
+    ) -> JSONResponse:
+        _catalog_bootstrap(db, settings)
+        conversation = get_conversation_or_404(db, conversation_id)
+        authority = public_runtime_authority(conversation) or {
+            "latest_reliable_seq": 0,
+            "agents": {},
+        }
+        workers_idle = all(
+            agent["worker_state"] == "LISTENING" and agent["typing_status"] == "idle"
+            for agent in authority["agents"].values()
+        )
+        running_runs = 0
+        pending_outbox = 0
+        if conversation.archive_dir is not None:
+            with connect_transcript(conversation) as connection:
+                running_runs = int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM agent_runs WHERE status = 'RUNNING'"
+                    ).fetchone()[0]
+                )
+                pending_outbox = int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM outbox_events WHERE dispatched_at IS NULL"
+                    ).fetchone()[0]
+                )
+        dispatcher_snapshot = cast(dict[str, Any], app.state.outbox_dispatcher.snapshot())
+        dispatcher_pending = [
+            item
+            for item in cast(list[str], dispatcher_snapshot["pending"])
+            if item == conversation_id
+        ]
+        dispatcher_active = [
+            item
+            for item in cast(list[str], dispatcher_snapshot["active"])
+            if item == conversation_id
+        ]
+        export_jobs_running = 0
+        if conversation.archive_dir is not None:
+            jobs_dir = Path(conversation.archive_dir) / "exports" / "analysis-jobs"
+            if jobs_dir.exists():
+                for path in jobs_dir.glob("*.json"):
+                    payload = cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
+                    if payload.get("status") in {"queued", "running"}:
+                        export_jobs_running += 1
+        idle = (
+            workers_idle
+            and running_runs == 0
+            and pending_outbox == 0
+            and not dispatcher_pending
+            and not dispatcher_active
+            and export_jobs_running == 0
+        )
+        return JSONResponse(
+            {
+                "conversation_id": conversation_id,
+                "idle": idle,
+                "workers_idle": workers_idle,
+                "running_runs": running_runs,
+                "pending_outbox": pending_outbox,
+                "dispatcher_pending": dispatcher_pending,
+                "dispatcher_active": dispatcher_active,
+                "export_jobs_running": export_jobs_running,
+                "authority": authority,
+            }
+        )
 
     @app.get("/api/v1/bootstrap", response_model=BootstrapResponse, tags=["bootstrap"])
     def get_bootstrap(db: Session = Depends(get_db_session)) -> BootstrapResponse:

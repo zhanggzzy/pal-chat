@@ -11,6 +11,7 @@ from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 from threading import Lock
+from time import perf_counter
 from typing import Any
 
 from fastapi import WebSocket
@@ -22,6 +23,13 @@ from pal_chat_server.db import SQLITE_BUSY_TIMEOUT_MS
 from pal_chat_server.errors import AppError
 from pal_chat_server.ids import generate_ulid
 from pal_chat_server.models import ConversationRecord
+from pal_chat_server.perf_trace import (
+    append_dispatcher_segment,
+    append_sync_segment,
+    register_conversation_trace,
+    set_metadata,
+    trace_enabled,
+)
 from pal_chat_server.schemas import ExperimentProfile
 from pal_chat_server.scripted_adapter import ScriptedModelAdapter, ScriptedStep
 
@@ -948,6 +956,7 @@ def commit_message(
 ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
     lock = _CONVERSATION_LOCKS[conversation.id]
     while True:
+        prepare_started = perf_counter()
         with lock, connect_transcript(conversation) as connection:
             connection.execute("BEGIN IMMEDIATE")
             prepared = _prepare_commit(
@@ -959,16 +968,29 @@ def commit_message(
             )
             if isinstance(prepared, tuple):
                 connection.commit()
+                append_sync_segment(
+                    "message.prepare_tx",
+                    (perf_counter() - prepare_started) * 1000,
+                )
                 return prepared[0], prepared[1], []
             connection.commit()
+        append_sync_segment(
+            "message.prepare_tx",
+            (perf_counter() - prepare_started) * 1000,
+        )
 
         try:
+            projection_started = perf_counter()
             projection_result = apply_projection(
                 conversation,
                 profile=profile,
                 payload=payload,
                 current_revision=prepared.checkpoint_revision,
                 current_snapshot=prepared.checkpoint_snapshot,
+            )
+            append_sync_segment(
+                "message.projection",
+                (perf_counter() - projection_started) * 1000,
             )
         except ProjectionError as exc:
             with lock, connect_transcript(conversation) as connection:
@@ -995,6 +1017,7 @@ def commit_message(
                 details={"reason": str(exc)},
             ) from exc
 
+        final_started = perf_counter()
         with lock, connect_transcript(conversation) as connection:
             connection.execute("BEGIN IMMEDIATE")
             current_seq_row = connection.execute(
@@ -1171,6 +1194,7 @@ def commit_message(
                     },
                 ),
             ]
+            outbox_enqueue_started = perf_counter()
             for event_id, event_type, conversation_seq, event_payload in outbox_events:
                 connection.execute(
                     """
@@ -1190,6 +1214,11 @@ def commit_message(
                         now,
                     ),
                 )
+            append_sync_segment(
+                "message.outbox_enqueue",
+                (perf_counter() - outbox_enqueue_started) * 1000,
+                enqueued_events=len(outbox_events),
+            )
             message_row = connection.execute(
                 "SELECT * FROM messages WHERE message_id = ?",
                 (message_id,),
@@ -1210,6 +1239,15 @@ def commit_message(
                 "created_at": now,
             }
             connection.commit()
+        append_sync_segment(
+            "message.final_tx",
+            (perf_counter() - final_started) * 1000,
+        )
+        if trace_enabled():
+            set_metadata("conversation_id", conversation.id)
+            set_metadata("client_message_id", payload.client_message_id)
+            set_metadata("message_id", message["message_id"])
+            register_conversation_trace(conversation.id)
         signal_outbox_dispatch(conversation.id)
         return message, cp_revision, []
 
@@ -1256,8 +1294,10 @@ def dispatch_pending_outbox(
     now = utc_now(clock).isoformat()
     root = Path(conversation.archive_dir or "")
     observations: list[dict[str, Any]] = []
+    dispatch_started = perf_counter()
     with connect_transcript(conversation) as connection:
         connection.execute("BEGIN IMMEDIATE")
+        select_started = perf_counter()
         rows = connection.execute(
             """
             SELECT rowid, event_id, event_type, conversation_seq, payload_json, created_at
@@ -1266,6 +1306,12 @@ def dispatch_pending_outbox(
             ORDER BY rowid
             """
         ).fetchall()
+        append_dispatcher_segment(
+            conversation.id,
+            "dispatcher.select_pending",
+            (perf_counter() - select_started) * 1000,
+            pending_events=len(rows),
+        )
         for row in rows:
             event = {
                 "protocol_version": 1,
@@ -1277,7 +1323,15 @@ def dispatch_pending_outbox(
                 "payload": json.loads(row["payload_json"]),
             }
             emitted.append(event)
+            publish_started = perf_counter()
             SOCKET_MANAGER.publish(conversation.id, event)
+            append_dispatcher_segment(
+                conversation.id,
+                "dispatcher.publish_event",
+                (perf_counter() - publish_started) * 1000,
+                event_type=event["event_type"],
+                event_id=event["event_id"],
+            )
             if root:
                 observations.append(
                     {
@@ -1299,6 +1353,7 @@ def dispatch_pending_outbox(
                         "checksum": f"sha256:{row['event_id']}",
                     }
                 )
+            update_started = perf_counter()
             connection.execute(
                 """
                 UPDATE outbox_events
@@ -1307,7 +1362,26 @@ def dispatch_pending_outbox(
                 """,
                 ("dispatched", now, row["event_id"]),
             )
+            append_dispatcher_segment(
+                conversation.id,
+                "dispatcher.mark_dispatched",
+                (perf_counter() - update_started) * 1000,
+                event_id=event["event_id"],
+            )
         connection.commit()
     if root:
+        observation_started = perf_counter()
         append_observations(root / "observations.ndjson", observations)
+        append_dispatcher_segment(
+            conversation.id,
+            "dispatcher.append_observations",
+            (perf_counter() - observation_started) * 1000,
+            observations=len(observations),
+        )
+    append_dispatcher_segment(
+        conversation.id,
+        "dispatcher.completed",
+        (perf_counter() - dispatch_started) * 1000,
+        emitted_events=len(emitted),
+    )
     return emitted

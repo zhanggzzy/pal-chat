@@ -64,6 +64,27 @@ def wait_until(
     raise TimeoutError("Timed out waiting for background processing.")
 
 
+def wait_for_idle_barrier(client: httpx.Client, conversation_id: str) -> dict[str, Any]:
+    last_payload: dict[str, Any] | None = None
+
+    def is_idle() -> bool:
+        nonlocal last_payload
+        response = client.get(f"/api/v1/conversations/{conversation_id}/idle-barrier")
+        response.raise_for_status()
+        last_payload = cast(dict[str, Any], response.json())
+        return bool(last_payload["idle"])
+
+    wait_until(is_idle, timeout=30.0, interval=0.2)
+    assert last_payload is not None
+    return last_payload
+
+
+def fetch_trace(client: httpx.Client, trace_id: str) -> dict[str, Any]:
+    response = client.get(f"/api/v1/perf-traces/{trace_id}")
+    response.raise_for_status()
+    return cast(dict[str, Any], response.json())
+
+
 def measure_get(
     client: httpx.Client,
     path: str,
@@ -75,14 +96,17 @@ def measure_get(
     samples: list[dict[str, Any]] = []
     for index in range(runs):
         started = time.perf_counter()
-        response = client.get(path)
+        response = client.get(path, headers={"X-PAL-Perf-Trace": "1"})
         response.raise_for_status()
+        trace_id = response.headers.get("X-PAL-Perf-Trace")
         samples.append(
             {
                 "run": index + 1,
                 "kind": cold_label if index == 0 else warm_label,
                 "duration_ms": (time.perf_counter() - started) * 1000,
                 "path": path,
+                "trace_id": trace_id,
+                "trace": fetch_trace(client, trace_id) if trace_id else None,
             }
         )
     return samples
@@ -148,9 +172,11 @@ def submit_message(
     client_message_id: str,
     content_markdown: str,
     mentions: list[str] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> httpx.Response:
     return client.post(
         f"/api/v1/conversations/{conversation_id}/messages",
+        headers=headers,
         json={
             "client_message_id": client_message_id,
             "content_markdown": content_markdown,
@@ -291,15 +317,18 @@ def measure_post_commits(
             conversation_id,
             client_message_id=client_message_id,
             content_markdown=f"measured perf commit {index}",
+            headers={"X-PAL-Perf-Trace": "1"},
         )
         response.raise_for_status()
         post_ms = (time.perf_counter() - started) * 1000
+        trace_id = response.headers.get("X-PAL-Perf-Trace")
         post_samples.append(
             {
                 "run": index + 1,
                 "kind": "cold" if index == 0 else "warm",
                 "duration_ms": post_ms,
                 "client_message_id": client_message_id,
+                "trace_id": trace_id,
             }
         )
 
@@ -321,6 +350,18 @@ def measure_post_commits(
                 "client_message_id": client_message_id,
             }
         )
+        if trace_id is not None:
+            wait_until(
+                lambda trace_id=trace_id: any(
+                    item["name"] == "dispatcher.completed"
+                    for item in fetch_trace(client, trace_id).get("dispatcher_segments", [])
+                ),
+                timeout=10.0,
+                interval=0.1,
+            )
+            trace_payload = fetch_trace(client, trace_id)
+            post_samples[-1]["trace"] = trace_payload
+            ws_visible_samples[-1]["trace"] = trace_payload
     ws.close()
     return post_samples, ws_visible_samples
 
@@ -425,6 +466,7 @@ def main() -> None:
             total_messages=args.total_messages,
             measured_posts=args.runs,
         )
+        idle_before_sampling = wait_for_idle_barrier(client, conversation_id)
         primary_detail = client.get(f"/api/v1/conversations/{conversation_id}")
         primary_detail.raise_for_status()
         primary_title = primary_detail.json()["conversation"]["title"]
@@ -509,6 +551,7 @@ def main() -> None:
     report_payload = {
         "generated_at": generated_at,
         "conversation_id": conversation_id,
+        "idle_barrier_before_sampling": idle_before_sampling,
         "exit_samples": [sample.to_dict() for sample in exit_samples],
         "auxiliary_samples": [sample.to_dict() for sample in auxiliary],
     }
