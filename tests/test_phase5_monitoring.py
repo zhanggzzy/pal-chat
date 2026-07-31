@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import sqlite3
 import time
+from pathlib import Path
 from typing import Any, cast
 
 from conftest import LiveServer
+from pal_chat_server.sequence_runtime import SOCKET_MANAGER
 from pal_chat_server.worker_main import RawWebSocketClient
 from test_phase3_worker_processes import agent_messages, submit_user_message, wait_until
-from test_phase4_memory_context import configure_phase4_runtime
+from test_phase4_memory_context import archive_root, configure_phase4_runtime
 
 
 def _phase5_conversation(server: LiveServer) -> str:
@@ -51,6 +54,21 @@ def _phase5_conversation(server: LiveServer) -> str:
             },
         ],
     )
+
+
+def _fetch_transcript_row(
+    transcript: Path,
+    query: str,
+    params: tuple[object, ...] = (),
+) -> sqlite3.Row:
+    connection = sqlite3.connect(transcript)
+    connection.row_factory = sqlite3.Row
+    try:
+        row = connection.execute(query, params).fetchone()
+        assert row is not None
+        return row
+    finally:
+        connection.close()
 
 
 def test_phase5_monitoring_endpoints_trace_run_memory_context_and_costs(
@@ -264,3 +282,70 @@ def test_phase5_detail_exposes_runtime_authority_for_transient_state_reconciliat
     assert idle_state is not None
     assert idle_state["worker_state"] == "LISTENING"
     assert idle_state["typing_run_id"] is None
+
+
+def test_stage7_post_returns_before_public_ws_dispatch_completes(
+    live_process_server: LiveServer,
+    monkeypatch: Any,
+) -> None:
+    conversation_id = _phase5_conversation(live_process_server)
+    transcript = archive_root(live_process_server, conversation_id) / "transcript.sqlite"
+    ws_url = live_process_server.base_url.replace("http://", "ws://")
+    ws = RawWebSocketClient(
+        f"{ws_url}/ws/v1/conversations/{conversation_id}",
+        {},
+    )
+    ws.connect()
+    assert ws.sock is not None
+    ws.sock.settimeout(5)
+    try:
+        snapshot = ws.recv_json()
+        assert snapshot["event_type"] == "session.snapshot"
+
+        original_publish = SOCKET_MANAGER.publish
+
+        def delayed_publish(conversation_id_arg: str, event: dict[str, Any]) -> None:
+            time.sleep(0.2)
+            original_publish(conversation_id_arg, event)
+
+        monkeypatch.setattr(SOCKET_MANAGER, "publish", delayed_publish)
+        started = time.perf_counter()
+        response = live_process_server.client.post(
+            f"/api/v1/conversations/{conversation_id}/messages",
+            json={
+                "client_message_id": "phase5-post-latency",
+                "content_markdown": "plain post latency probe",
+                "mentions": [],
+                "responds_to": [],
+                "primary_reply_to": None,
+            },
+        )
+        post_ms = (time.perf_counter() - started) * 1000
+        assert response.status_code == 201
+        row = _fetch_transcript_row(
+            transcript,
+            """
+            SELECT dispatch_attempts, dispatched_at
+            FROM outbox_events
+            WHERE event_type = 'message.committed'
+            ORDER BY rowid DESC
+            LIMIT 1
+            """,
+        )
+        assert int(row["dispatch_attempts"]) == 0
+        assert row["dispatched_at"] is None
+
+        visible_started = time.perf_counter()
+        deadline = time.time() + 5
+        event: dict[str, Any] | None = None
+        while time.time() < deadline:
+            candidate = ws.recv_json()
+            if candidate["event_type"] == "message.committed":
+                event = candidate
+                break
+        assert event is not None
+        ws_ms = (time.perf_counter() - visible_started) * 1000
+        assert post_ms < 200
+        assert ws_ms >= 150
+    finally:
+        ws.close()

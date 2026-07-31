@@ -16,8 +16,8 @@ from pal_chat_server.sequence_runtime import (
     MessagePayload,
     commit_message,
     connect_transcript,
-    dispatch_pending_outbox,
     list_messages,
+    signal_outbox_dispatch,
     utc_now,
 )
 
@@ -998,7 +998,7 @@ class AgentRuntimeManager:
                 ),
             )
             connection.commit()
-        dispatch_pending_outbox(conversation, clock=self.clock)
+        signal_outbox_dispatch(conversation.id)
 
     def _start_typing(self, conversation: ConversationRecord, worker: WorkerState) -> None:
         if worker.typing_status == "active":

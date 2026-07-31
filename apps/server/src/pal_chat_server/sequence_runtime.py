@@ -4,6 +4,7 @@ import asyncio
 import json
 import sqlite3
 from collections import defaultdict
+from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass
 from datetime import datetime
@@ -122,10 +123,26 @@ class ConversationSocketManager:
 
 SOCKET_MANAGER = ConversationSocketManager()
 _CONVERSATION_LOCKS: dict[str, Lock] = defaultdict(Lock)
+_OUTBOX_SIGNAL_HANDLERS: list[Callable[[str], None]] = []
 
 
 def utc_now(clock: Clock | None = None) -> datetime:
     return (clock or RealClock()).now_utc()
+
+
+def register_outbox_signal(handler: Callable[[str], None]) -> None:
+    if handler not in _OUTBOX_SIGNAL_HANDLERS:
+        _OUTBOX_SIGNAL_HANDLERS.append(handler)
+
+
+def unregister_outbox_signal(handler: Callable[[str], None]) -> None:
+    if handler in _OUTBOX_SIGNAL_HANDLERS:
+        _OUTBOX_SIGNAL_HANDLERS.remove(handler)
+
+
+def signal_outbox_dispatch(conversation_id: str) -> None:
+    for handler in _OUTBOX_SIGNAL_HANDLERS:
+        handler(conversation_id)
 
 
 def transcript_db_path(conversation: ConversationRecord) -> Path:
@@ -468,7 +485,16 @@ def _prepare_commit(
                 (existing_submission["message_id"],),
             ).fetchone()
             assert message_row is not None
-            message = build_message_record(message_row, connection)
+            message_id = str(message_row["message_id"])
+            mentions_by_message, responds_to_by_message = _grouped_message_metadata(
+                connection,
+                [message_id],
+            )
+            message = build_message_record(
+                message_row,
+                mentions=mentions_by_message.get(message_id, []),
+                responds_to=responds_to_by_message.get(message_id, []),
+            )
             cp_revision = get_cp_revision(conversation, message["cp_revision"])
             return message, cp_revision, PreparedCommit(
                 request_hash=request_hash,
@@ -1184,8 +1210,8 @@ def commit_message(
                 "created_at": now,
             }
             connection.commit()
-        events = dispatch_pending_outbox(conversation, clock=clock)
-        return message, cp_revision, events
+        signal_outbox_dispatch(conversation.id)
+        return message, cp_revision, []
 
 
 def retry_submission(

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from conftest import LiveServer, live_server_context
+from pal_chat_server.sequence_runtime import SOCKET_MANAGER
 from test_phase3_worker_processes import (
     agent_messages,
     default_profile_payload,
@@ -501,3 +502,89 @@ def test_stage7_restart_recovers_pending_outbox_and_analysis_export(
         )
         assert ready.status_code == 200
         assert ready.json()["status"] == "ready"
+
+
+def test_stage7_dispatcher_retries_failed_outbox_delivery(
+    live_process_server: LiveServer,
+    monkeypatch: Any,
+) -> None:
+    conversation_id = _phase6_conversation(live_process_server)
+    submit_user_message(
+        live_process_server.client,
+        conversation_id,
+        client_message_id="phase7-dispatcher-retry-user",
+        content_markdown="@A 阶段 6",
+        mentions=["agent-a"],
+    )
+    wait_until(lambda: len(agent_messages(live_process_server.client, conversation_id)) == 1)
+    transcript = archive_root(live_process_server, conversation_id) / "transcript.sqlite"
+    call_count = {"value": 0}
+    original_publish = SOCKET_MANAGER.publish
+
+    def flaky_publish(conversation_id_arg: str, event: dict[str, Any]) -> None:
+        call_count["value"] += 1
+        if call_count["value"] == 1:
+            raise RuntimeError("inject one-shot outbox failure")
+        original_publish(conversation_id_arg, event)
+
+    monkeypatch.setattr(SOCKET_MANAGER, "publish", flaky_publish)
+
+    connection = sqlite3.connect(transcript)
+    try:
+        connection.execute(
+            """
+            INSERT INTO outbox_events(
+              event_id, event_type, conversation_seq, payload_json, status,
+              dispatch_attempts, dispatched_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "evt-stage7-dispatcher-retry",
+                "agent.typing_stopped",
+                None,
+                json.dumps(
+                    {
+                        "agent_id": "agent-a",
+                        "run_id": "run-dispatch-retry",
+                        "reason": "retry-probe",
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                "pending",
+                0,
+                None,
+                "2026-07-31T18:40:00+00:00",
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    live_process_server.app.state.outbox_dispatcher.enqueue(conversation_id)
+
+    def outbox_recovered() -> bool:
+        row = _fetch_transcript_row(
+            transcript,
+            """
+            SELECT dispatch_attempts, dispatched_at
+            FROM outbox_events
+            WHERE event_id = ?
+            """,
+            ("evt-stage7-dispatcher-retry",),
+        )
+        return int(row["dispatch_attempts"]) == 1 and row["dispatched_at"] is not None
+
+    wait_until(outbox_recovered)
+    assert call_count["value"] >= 2
+
+
+def test_stage7_dispatcher_shutdown_converges(data_dir: Path) -> None:
+    dispatcher = None
+    with live_server_context(data_dir) as server:
+        dispatcher = server.app.state.outbox_dispatcher
+        assert dispatcher._thread is not None
+        assert dispatcher._thread.is_alive()
+    assert dispatcher is not None
+    assert dispatcher._thread is not None
+    assert not dispatcher._thread.is_alive()

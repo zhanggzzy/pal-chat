@@ -57,6 +57,7 @@ from pal_chat_server.monitoring import (
     list_memory_revisions,
     list_runs,
 )
+from pal_chat_server.outbox_dispatcher import OutboxDispatcher
 from pal_chat_server.schemas import (
     AgentRunListResponse,
     AgentRunRead,
@@ -109,14 +110,16 @@ from pal_chat_server.sequence_runtime import (
     MessagePayload,
     commit_message,
     connect_transcript,
-    dispatch_pending_outbox,
     fetch_latest_cp_snapshot,
     get_cp_revision,
     list_cp_revisions,
     list_messages,
+    register_outbox_signal,
     replay_events,
     retry_submission,
     session_snapshot,
+    signal_outbox_dispatch,
+    unregister_outbox_signal,
     utc_now,
 )
 from pal_chat_server.services import (
@@ -166,10 +169,12 @@ def _context_owner_id(context_payload: dict[str, Any]) -> str:
 def create_app() -> FastAPI:
     settings = get_settings()
     worker_supervisor = WorkerSupervisor(server_base_url=settings.server_base_url)
+    outbox_dispatcher = OutboxDispatcher(session_factory=get_session_factory())
 
     @asynccontextmanager
     async def lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
         ensure_catalog_schema(settings)
+        outbox_dispatcher.start()
         with get_session_factory()() as db:
             ensure_default_template(db)
             sync_catalog_from_manifests(db, settings)
@@ -181,11 +186,13 @@ def create_app() -> FastAPI:
         for conversation in conversations:
             if conversation.archive_dir is None:
                 continue
-            dispatch_pending_outbox(conversation)
+            outbox_dispatcher.enqueue(conversation.id)
             resume_analysis_export_jobs(conversation, settings=settings)
         try:
             yield
         finally:
+            unregister_outbox_signal(outbox_dispatcher.enqueue)
+            outbox_dispatcher.shutdown()
             app_instance.state.worker_supervisor.shutdown()
 
     app = FastAPI(
@@ -206,6 +213,8 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.state.worker_supervisor = worker_supervisor
+    app.state.outbox_dispatcher = outbox_dispatcher
+    register_outbox_signal(outbox_dispatcher.enqueue)
 
     def conversation_profile(conversation: ConversationRecord) -> ExperimentProfile:
         locked = getattr(conversation, "locked_profile_json", None)
@@ -264,7 +273,7 @@ def create_app() -> FastAPI:
                 ),
             )
             connection.commit()
-        dispatch_pending_outbox(conversation)
+        signal_outbox_dispatch(conversation.id)
 
     def queue_public_event_row(
         connection: Any,
@@ -2078,7 +2087,7 @@ def create_app() -> FastAPI:
                     },
                 )
             connection.commit()
-        dispatch_pending_outbox(conversation)
+        signal_outbox_dispatch(conversation.id)
         if should_apply_runtime_state and current_worker_state != next_worker_state:
             enqueue_public_event(
                 conversation,
@@ -2211,7 +2220,7 @@ def create_app() -> FastAPI:
                 },
             )
             connection.commit()
-        dispatch_pending_outbox(conversation)
+        signal_outbox_dispatch(conversation.id)
         return {"ok": "true"}
 
     @app.websocket("/internal/v1/conversations/{conversation_id}/agent-stream")
