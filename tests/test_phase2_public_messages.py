@@ -6,7 +6,7 @@ from threading import Barrier
 from typing import Any, cast
 
 from fastapi.testclient import TestClient
-from pal_chat_server.db import get_session_factory
+from pal_chat_server.db import SQLITE_BUSY_TIMEOUT_MS, get_session_factory
 from pal_chat_server.errors import AppError
 from pal_chat_server.schemas import ExperimentProfile
 from pal_chat_server.sequence_runtime import (
@@ -14,6 +14,7 @@ from pal_chat_server.sequence_runtime import (
     commit_message,
     connect_transcript,
     dispatch_pending_outbox,
+    list_messages_from_connection,
 )
 from pal_chat_server.services import get_conversation_or_404
 
@@ -175,6 +176,70 @@ def test_h02_concurrent_commits_keep_contiguous_sequence(migrated_app: TestClien
         len(revision["snapshot"]["segments"]) == revision["projection_revision"]
         for revision in revisions
     )
+
+
+def test_recent_messages_returns_latest_contiguous_1000_with_three_sql_reads(
+    migrated_app: TestClient,
+) -> None:
+    conversation = create_running_conversation(
+        migrated_app,
+        title="Recent 1000 Demo",
+        fixed_window=True,
+    )
+    conversation_id = cast(str, conversation["id"])
+    record, profile = load_record_and_profile(conversation_id)
+
+    for index in range(1, 1106):
+        commit_message(
+            record,
+            profile=profile,
+            payload=MessagePayload(
+                client_message_id=f"bulk-{index}",
+                content_markdown=f"bulk message {index}",
+                mentions=["agent-a"] if index % 10 == 0 else [],
+                primary_reply_to=None,
+                responds_to=[],
+            ),
+        )
+
+    response = migrated_app.get(f"/api/v1/conversations/{conversation_id}/messages?limit=1000")
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len(items) == 1000
+    assert [item["conversation_seq"] for item in items] == list(range(106, 1106))
+
+    statements: list[str] = []
+    with connect_transcript(record) as connection:
+        connection.set_trace_callback(statements.append)
+        rows = list_messages_from_connection(connection, after_seq=0, limit=1000)
+        connection.set_trace_callback(None)
+
+    sql_reads = [
+        statement
+        for statement in statements
+        if statement.lstrip().upper().startswith("SELECT")
+    ]
+    assert len(rows) == 1000
+    assert len(sql_reads) <= 3
+
+
+def test_transcript_connection_uses_wal_full_and_busy_timeout(
+    migrated_app: TestClient,
+) -> None:
+    conversation = create_running_conversation(
+        migrated_app,
+        title="Transcript Pragma Demo",
+        fixed_window=True,
+    )
+    record, _ = load_record_and_profile(cast(str, conversation["id"]))
+    with connect_transcript(record) as connection:
+        journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+        synchronous = int(connection.execute("PRAGMA synchronous").fetchone()[0])
+        busy_timeout = int(connection.execute("PRAGMA busy_timeout").fetchone()[0])
+
+    assert str(journal_mode).lower() == "wal"
+    assert synchronous == 2
+    assert busy_timeout == SQLITE_BUSY_TIMEOUT_MS
 
 
 def test_h12_failed_projection_does_not_consume_sequence(migrated_app: TestClient) -> None:

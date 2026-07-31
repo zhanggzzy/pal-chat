@@ -17,6 +17,7 @@ from fastapi import WebSocket
 from pal_chat_server.archive import append_observations, transcript_path
 from pal_chat_server.clock import Clock, RealClock
 from pal_chat_server.contracts import ModelRequest
+from pal_chat_server.db import SQLITE_BUSY_TIMEOUT_MS
 from pal_chat_server.errors import AppError
 from pal_chat_server.ids import generate_ulid
 from pal_chat_server.models import ConversationRecord
@@ -160,6 +161,12 @@ def message_request_hash(payload: MessagePayload) -> str:
 
 def connect_transcript(conversation: ConversationRecord) -> sqlite3.Connection:
     connection = sqlite3.connect(transcript_db_path(conversation))
+    cursor = connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=FULL")
+    cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
     connection.row_factory = sqlite3.Row
     return connection
 
@@ -604,6 +611,20 @@ def list_messages(
     limit: int,
 ) -> list[dict[str, Any]]:
     with connect_transcript(conversation) as connection:
+        return list_messages_from_connection(
+            connection,
+            after_seq=after_seq,
+            limit=limit,
+        )
+
+
+def list_messages_from_connection(
+    connection: sqlite3.Connection,
+    *,
+    after_seq: int,
+    limit: int,
+) -> list[dict[str, Any]]:
+    if after_seq > 0:
         rows = connection.execute(
             """
             SELECT *
@@ -623,18 +644,41 @@ def list_messages(
             """,
             (after_seq, limit),
         ).fetchall()
-        message_ids = [str(row["message_id"]) for row in rows]
-        mentions_by_message, responds_to_by_message = _grouped_message_metadata(
-            connection, message_ids
+    else:
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM (
+              SELECT *
+              FROM messages
+              WHERE (
+                sender_kind != 'agent'
+                OR EXISTS (
+                  SELECT 1
+                  FROM agent_runs
+                  WHERE agent_runs.run_id = messages.client_message_id
+                    AND agent_runs.status = 'COMMITTED'
+                )
+              )
+              ORDER BY conversation_seq DESC
+              LIMIT ?
+            ) recent_messages
+            ORDER BY conversation_seq
+            """,
+            (limit,),
+        ).fetchall()
+    message_ids = [str(row["message_id"]) for row in rows]
+    mentions_by_message, responds_to_by_message = _grouped_message_metadata(
+        connection, message_ids
+    )
+    return [
+        build_message_record(
+            row,
+            mentions=mentions_by_message.get(str(row["message_id"]), []),
+            responds_to=responds_to_by_message.get(str(row["message_id"]), []),
         )
-        return [
-            build_message_record(
-                row,
-                mentions=mentions_by_message.get(str(row["message_id"]), []),
-                responds_to=responds_to_by_message.get(str(row["message_id"]), []),
-            )
-            for row in rows
-        ]
+        for row in rows
+    ]
 
 
 def list_cp_revisions(conversation: ConversationRecord) -> list[dict[str, Any]]:
