@@ -7,11 +7,12 @@ import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
+from pal_chat_server.worker_main import RawWebSocketClient
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_REPORT_JSON = ROOT_DIR / "var" / "metrics" / "stage7-performance-baseline.json"
@@ -24,6 +25,7 @@ class Sample:
     threshold_ms: float
     durations_ms: list[float]
     note: str
+    raw_samples: list[dict[str, Any]] | None = None
 
     @property
     def avg_ms(self) -> float:
@@ -43,6 +45,8 @@ class Sample:
             "p95_ms": round(self.p95_ms, 2),
             "runs": len(self.durations_ms),
             "note": self.note,
+            "durations_ms": [round(value, 2) for value in self.durations_ms],
+            "raw_samples": self.raw_samples or [],
         }
 
 
@@ -60,14 +64,32 @@ def wait_until(
     raise TimeoutError("Timed out waiting for background processing.")
 
 
-def measure_get(client: httpx.Client, path: str, runs: int) -> list[float]:
-    durations: list[float] = []
-    for _ in range(runs):
+def measure_get(
+    client: httpx.Client,
+    path: str,
+    runs: int,
+    *,
+    cold_label: str = "cold",
+    warm_label: str = "warm",
+) -> list[dict[str, Any]]:
+    samples: list[dict[str, Any]] = []
+    for index in range(runs):
         started = time.perf_counter()
         response = client.get(path)
         response.raise_for_status()
-        durations.append((time.perf_counter() - started) * 1000)
-    return durations
+        samples.append(
+            {
+                "run": index + 1,
+                "kind": cold_label if index == 0 else warm_label,
+                "duration_ms": (time.perf_counter() - started) * 1000,
+                "path": path,
+            }
+        )
+    return samples
+
+
+def sample_durations(raw_samples: list[dict[str, Any]], field: str = "duration_ms") -> list[float]:
+    return [float(sample[field]) for sample in raw_samples]
 
 
 def clone_default_profile(client: httpx.Client) -> dict[str, Any]:
@@ -217,8 +239,10 @@ def prepare_representative_data(
         )
         response.raise_for_status()
         expected_messages += 2
+        expected_total = expected_messages
         wait_until(
-            lambda: message_count(client, conversation_id) >= expected_messages
+            lambda expected_total=expected_total: message_count(client, conversation_id)
+            >= expected_total
             and no_running_runs(client, conversation_id),
             timeout=30.0,
         )
@@ -244,19 +268,61 @@ def measure_post_commits(
     conversation_id: str,
     *,
     runs: int,
-) -> list[float]:
-    durations: list[float] = []
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    post_samples: list[dict[str, Any]] = []
+    ws_visible_samples: list[dict[str, Any]] = []
+    ws_url = str(client.base_url).replace("http://", "ws://").rstrip("/")
+    ws = RawWebSocketClient(
+        f"{ws_url}/ws/v1/conversations/{conversation_id}",
+        {},
+    )
+    ws.connect()
+    assert ws.sock is not None
+    ws.sock.settimeout(5)
     for index in range(runs):
+        if index == 0:
+            snapshot = ws.recv_json()
+            if snapshot.get("event_type") != "session.snapshot":
+                raise RuntimeError("expected websocket session snapshot before perf sampling")
+        client_message_id = f"perf-measure-{index}"
         started = time.perf_counter()
         response = submit_message(
             client,
             conversation_id,
-            client_message_id=f"perf-measure-{index}",
+            client_message_id=client_message_id,
             content_markdown=f"measured perf commit {index}",
         )
         response.raise_for_status()
-        durations.append((time.perf_counter() - started) * 1000)
-    return durations
+        post_ms = (time.perf_counter() - started) * 1000
+        post_samples.append(
+            {
+                "run": index + 1,
+                "kind": "cold" if index == 0 else "warm",
+                "duration_ms": post_ms,
+                "client_message_id": client_message_id,
+            }
+        )
+
+        visible_started = time.perf_counter()
+        while True:
+            event = ws.recv_json()
+            if event.get("event_type") != "message.committed":
+                continue
+            payload = event.get("payload") or {}
+            message = payload.get("message") or {}
+            if message.get("client_message_id") != client_message_id:
+                continue
+            break
+        ws_visible_samples.append(
+            {
+                "run": index + 1,
+                "kind": "cold" if index == 0 else "warm",
+                "duration_ms": (time.perf_counter() - visible_started) * 1000,
+                "client_message_id": client_message_id,
+            }
+        )
+    ws.close()
+    return post_samples, ws_visible_samples
 
 
 def measure_ui_sidebar(
@@ -291,6 +357,7 @@ def measure_ui_sidebar(
         threshold_ms=float(payload["threshold_ms"]),
         durations_ms=[float(value) for value in payload["durations_ms"]],
         note="Playwright headless; selects representative primary conversation from sidebar.",
+        raw_samples=cast(list[dict[str, Any]], payload.get("raw_samples") or []),
     )
 
 
@@ -348,7 +415,7 @@ def main() -> None:
     parser.add_argument("--report-md", type=Path, default=DEFAULT_REPORT_MD)
     args = parser.parse_args()
 
-    generated_at = datetime.now(timezone.utc).isoformat()
+    generated_at = datetime.now(UTC).isoformat()
     args.report_json.parent.mkdir(parents=True, exist_ok=True)
     args.report_md.parent.mkdir(parents=True, exist_ok=True)
 
@@ -358,39 +425,63 @@ def main() -> None:
             total_messages=args.total_messages,
             measured_posts=args.runs,
         )
-        primary_title = client.get(f"/api/v1/conversations/{conversation_id}").json()["conversation"]["title"]
+        primary_detail = client.get(f"/api/v1/conversations/{conversation_id}")
+        primary_detail.raise_for_status()
+        primary_title = primary_detail.json()["conversation"]["title"]
 
+        post_commit_samples, ws_visible_samples = measure_post_commits(
+            client,
+            conversation_id,
+            runs=args.runs,
+        )
         post_commit = Sample(
             "message_commit_non_model",
             threshold_ms=50,
-            durations_ms=measure_post_commits(client, conversation_id, runs=args.runs),
+            durations_ms=sample_durations(post_commit_samples),
             note="User message commit without mentions; no provider call should occur.",
+            raw_samples=post_commit_samples,
+        )
+        ws_visible = Sample(
+            "message_commit_ws_visible",
+            threshold_ms=100,
+            durations_ms=sample_durations(ws_visible_samples),
+            note=(
+                "Elapsed time from POST return to matching message.committed "
+                "becoming visible on WS."
+            ),
+            raw_samples=ws_visible_samples,
+        )
+        recent_message_samples = measure_get(
+            client,
+            f"/api/v1/conversations/{conversation_id}/messages?limit=1000",
+            args.runs,
         )
         recent_messages = Sample(
             "messages_recent_1000",
             threshold_ms=200,
-            durations_ms=measure_get(
-                client,
-                f"/api/v1/conversations/{conversation_id}/messages?limit=1000",
-                args.runs,
-            ),
+            durations_ms=sample_durations(recent_message_samples),
             note="Reads the latest 1000 public messages from the representative conversation.",
+            raw_samples=recent_message_samples,
+        )
+        cost_breakdown_samples = measure_get(
+            client,
+            f"/api/v1/conversations/{conversation_id}/metrics/cost-breakdown",
+            args.runs,
         )
         cost_breakdown = Sample(
             "cost_breakdown",
             threshold_ms=200,
-            durations_ms=measure_get(
-                client,
-                f"/api/v1/conversations/{conversation_id}/metrics/cost-breakdown",
-                args.runs,
-            ),
+            durations_ms=sample_durations(cost_breakdown_samples),
             note="Auxiliary monitoring endpoint on the same representative conversation.",
+            raw_samples=cost_breakdown_samples,
         )
+        ready_health_samples = measure_get(client, "/health/ready", args.runs)
         ready_health = Sample(
             "ready_health",
             threshold_ms=200,
-            durations_ms=measure_get(client, "/health/ready", args.runs),
+            durations_ms=sample_durations(ready_health_samples),
             note="Service health baseline under the seeded dataset.",
+            raw_samples=ready_health_samples,
         )
         end_conversation(client, conversation_id)
         secondary_title = f"Stage7 Perf Secondary {int(time.time())}"
@@ -414,7 +505,7 @@ def main() -> None:
     )
 
     exit_samples = [ui_threshold_sample, post_commit, recent_messages]
-    auxiliary = [ready_health, cost_breakdown]
+    auxiliary = [ready_health, cost_breakdown, ws_visible]
     report_payload = {
         "generated_at": generated_at,
         "conversation_id": conversation_id,

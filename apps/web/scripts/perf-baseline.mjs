@@ -55,6 +55,7 @@ async function main() {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const durations = [];
+  const rawSamples = [];
   try {
     await page.goto(options.baseUrl, { waitUntil: "networkidle" });
     await page.getByRole("tablist", { name: "Inspector Tabs" }).waitFor({ state: "visible" });
@@ -62,6 +63,12 @@ async function main() {
     for (let index = 0; index < options.runs; index += 1) {
       const duration = await selectConversation(page, options.primaryTitle);
       durations.push(duration);
+       rawSamples.push({
+        run: index + 1,
+        kind: index === 0 ? "cold" : "warm",
+        duration_ms: Number(duration.toFixed(2)),
+        target_title: options.primaryTitle,
+      });
       await selectConversation(page, options.secondaryTitle);
     }
   } finally {
@@ -74,6 +81,7 @@ async function main() {
         sample: "ui_sidebar_select",
         runs: durations.length,
         durations_ms: durations.map((value) => Number(value.toFixed(2))),
+        raw_samples: rawSamples,
         avg_ms: Number(average.toFixed(2)),
         p95_ms: Number(p95(durations).toFixed(2)),
         viewport: "1440x900",

@@ -141,6 +141,22 @@ def _fetch_transcript_row(
         connection.close()
 
 
+def _observation_event_ids(root: Path) -> list[str]:
+    observations_path = root / "observations.ndjson"
+    if not observations_path.exists():
+        return []
+    event_ids: list[str] = []
+    for line in observations_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = cast(dict[str, Any], json.loads(line))
+        nested = cast(dict[str, Any], payload.get("payload") or {})
+        event_id = nested.get("event_id")
+        if isinstance(event_id, str):
+            event_ids.append(event_id)
+    return event_ids
+
+
 def test_h14_history_index_and_raw_fallback_stay_read_only(
     live_process_server: LiveServer,
 ) -> None:
@@ -451,6 +467,7 @@ def test_stage7_restart_recovers_pending_outbox_and_analysis_export(
 
     with live_server_context(data_dir) as server:
         transcript = archive_root(server, conversation_id) / "transcript.sqlite"
+        root = archive_root(server, conversation_id)
 
         def outbox_recovered() -> bool:
             row = _fetch_transcript_row(
@@ -474,6 +491,10 @@ def test_stage7_restart_recovers_pending_outbox_and_analysis_export(
             return cast(str, response.json()["status"]) == "ready"
 
         wait_until(export_recovered)
+        wait_until(
+            lambda: not cast(list[str], server.app.state.outbox_dispatcher.snapshot()["pending"])
+            and not cast(list[str], server.app.state.outbox_dispatcher.snapshot()["active"])
+        )
         ready = server.client.get(
             f"/api/v1/conversations/{conversation_id}/analysis-exports/{job_id}"
         )
@@ -483,9 +504,11 @@ def test_stage7_restart_recovers_pending_outbox_and_analysis_export(
         assert downloaded.status_code == 200
         export_path = archive_root(server, conversation_id) / "exports" / f"analysis-{job_id}.zip"
         assert zipfile.is_zipfile(Path(export_path))
+        assert _observation_event_ids(root).count("evt-stage7-recovery") == 1
 
     with live_server_context(data_dir) as server:
         transcript = archive_root(server, conversation_id) / "transcript.sqlite"
+        root = archive_root(server, conversation_id)
         row = _fetch_transcript_row(
             transcript,
             """
@@ -502,6 +525,10 @@ def test_stage7_restart_recovers_pending_outbox_and_analysis_export(
         )
         assert ready.status_code == 200
         assert ready.json()["status"] == "ready"
+        assert _observation_event_ids(root).count("evt-stage7-recovery") == 1
+        snapshot = cast(dict[str, Any], server.app.state.outbox_dispatcher.snapshot())
+        assert snapshot["pending"] == []
+        assert snapshot["active"] == []
 
 
 def test_stage7_dispatcher_retries_failed_outbox_delivery(
@@ -585,6 +612,9 @@ def test_stage7_dispatcher_shutdown_converges(data_dir: Path) -> None:
         dispatcher = server.app.state.outbox_dispatcher
         assert dispatcher._thread is not None
         assert dispatcher._thread.is_alive()
+        snapshot = cast(dict[str, Any], dispatcher.snapshot())
+        assert snapshot["pending"] == []
+        assert snapshot["active"] == []
     assert dispatcher is not None
     assert dispatcher._thread is not None
     assert not dispatcher._thread.is_alive()

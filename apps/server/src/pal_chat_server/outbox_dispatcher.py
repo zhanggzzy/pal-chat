@@ -19,6 +19,7 @@ class OutboxDispatcher:
         self._session_factory = session_factory
         self._retry_delay_s = retry_delay_s
         self._pending: set[str] = set()
+        self._active: set[str] = set()
         self._condition = threading.Condition()
         self._thread: threading.Thread | None = None
         self._stopping = False
@@ -48,14 +49,31 @@ class OutboxDispatcher:
         if thread is not None:
             thread.join(timeout=5)
 
+    def snapshot(self) -> dict[str, object]:
+        with self._condition:
+            return {
+                "pending": sorted(self._pending),
+                "active": sorted(self._active),
+                "stopping": self._stopping,
+                "thread_alive": bool(self._thread is not None and self._thread.is_alive()),
+            }
+
     def _run(self) -> None:
         while True:
             conversation_ids = self._next_batch()
             if conversation_ids is None:
                 return
             for conversation_id in conversation_ids:
+                with self._condition:
+                    self._active.add(conversation_id)
                 if self._dispatch_one(conversation_id):
+                    with self._condition:
+                        self._active.discard(conversation_id)
+                        self._condition.notify_all()
                     continue
+                with self._condition:
+                    self._active.discard(conversation_id)
+                    self._condition.notify_all()
                 if self._should_stop():
                     return
                 time.sleep(self._retry_delay_s)
