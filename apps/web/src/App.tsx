@@ -27,6 +27,7 @@ import type {
   Message,
   OutboxEvent,
   ReviewState,
+  RuntimeAuthority,
   RuntimeGuardrails,
   SessionSnapshot,
 } from "./types";
@@ -84,6 +85,24 @@ function agentProfiles(conversation: ConversationRead | null): [AgentProfile, Ag
   return [profile.agent_a, profile.agent_b];
 }
 
+function typingFromAuthority(
+  authority: RuntimeAuthority | null,
+): Record<string, { active: boolean; runId: string | null; reason?: string }> {
+  if (!authority) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(authority.agents).map(([agentId, state]) => [
+      agentId,
+      {
+        active: state.typing_status === "active",
+        runId: state.typing_run_id,
+        reason: state.typing_status === "active" ? "authoritative" : "idle",
+      },
+    ]),
+  );
+}
+
 function RawJsonCard({
   title,
   value,
@@ -131,8 +150,10 @@ export function App(): JSX.Element {
   const [wsBanner, setWsBanner] = useState<string | null>(null);
   const [runtimeState, setRuntimeState] = useState(emptyRuntimeViewState());
   const [needsReviewResync, setNeedsReviewResync] = useState(false);
+  const [socketNonce, setSocketNonce] = useState(0);
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
+  const runtimeStateRef = useRef(runtimeState);
 
   const selectedRun = useMemo(
     () => runs.find((item) => item.run_id === selectedRunId) ?? null,
@@ -172,10 +193,14 @@ export function App(): JSX.Element {
       latestSeq: payload.messages.at(-1)?.conversation_seq ?? 0,
       latestCpRevision: payload.cpRevisions.at(-1)?.projection_revision ?? 0,
       guardrails: payload.detail.guardrails,
-      typing: {},
+      typing: typingFromAuthority(payload.runtimeAuthority),
     });
     setStatusText("已同步");
   }
+
+  useEffect(() => {
+    runtimeStateRef.current = runtimeState;
+  }, [runtimeState]);
 
   useEffect(() => {
     let cancelled = false;
@@ -235,7 +260,7 @@ export function App(): JSX.Element {
     }
     const url = new URL(`/ws/v1/conversations/${selectedConversationId}`, apiBase);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    url.searchParams.set("after_seq", String(runtimeState.latestSeq));
+    url.searchParams.set("after_seq", String(runtimeStateRef.current.latestSeq));
     const socket = new WebSocket(url);
     socketRef.current = socket;
     socket.addEventListener("open", () => {
@@ -253,7 +278,7 @@ export function App(): JSX.Element {
       setWsBanner("连接已断开，正在补取缺口并重连。");
       reconnectTimerRef.current = window.setTimeout(() => {
         void refreshConversation(selectedConversationId).catch(() => undefined);
-        setSelectedConversationId((current) => current);
+        setSocketNonce((current) => current + 1);
       }, 5000);
     });
     return () => {
@@ -262,7 +287,7 @@ export function App(): JSX.Element {
       }
       socket.close();
     };
-  }, [apiBase, reviewState, runtimeState.latestSeq, selectedConversationId]);
+  }, [apiBase, reviewState, selectedConversationId, socketNonce]);
 
   useEffect(() => {
     setMessages(runtimeState.messages);

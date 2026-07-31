@@ -218,9 +218,12 @@ class ConversationListResponse(BaseModel):
 
 
 class ConversationDetailResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     conversation: ConversationRead
     validation: ValidationResult
     manifest: dict[str, Any] | None
+    runtime_authority: dict[str, Any] | None = None
 
 
 class TransitionRule(BaseModel):

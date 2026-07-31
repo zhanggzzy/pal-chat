@@ -384,6 +384,39 @@ def create_app() -> FastAPI:
                 return int(cast(int | str, worker.get("restart_count", 0)))
         return 0
 
+    def public_runtime_authority(conversation: ConversationRecord) -> dict[str, Any] | None:
+        if conversation.archive_dir is None:
+            return None
+        with connect_transcript(conversation) as connection:
+            rows = connection.execute(
+                """
+                SELECT agent_id, worker_state, active_run_id, typing_status, typing_run_id,
+                       reliable_seq, dirty_since_seq, updated_at
+                FROM agent_runtime_state
+                ORDER BY agent_id
+                """
+            ).fetchall()
+        agents: dict[str, Any] = {}
+        latest_reliable_seq = 0
+        for row in rows:
+            reliable_seq = int(row["reliable_seq"])
+            latest_reliable_seq = max(latest_reliable_seq, reliable_seq)
+            agents[str(row["agent_id"])] = {
+                "worker_state": str(row["worker_state"]),
+                "active_run_id": current_run_id(row["active_run_id"]),
+                "typing_status": str(row["typing_status"]),
+                "typing_run_id": current_run_id(row["typing_run_id"]),
+                "reliable_seq": reliable_seq,
+                "dirty_since_seq": (
+                    None if row["dirty_since_seq"] is None else int(row["dirty_since_seq"])
+                ),
+                "updated_at": row["updated_at"],
+            }
+        return {
+            "latest_reliable_seq": latest_reliable_seq,
+            "agents": agents,
+        }
+
     def is_terminal_run_status(status_name: str) -> bool:
         return status_name in {
             "BUDGET_EXHAUSTED",
@@ -677,6 +710,9 @@ def create_app() -> FastAPI:
             conversation=conversation,
             validation=validation,
             manifest=manifest,
+            runtime_authority=public_runtime_authority(
+                get_conversation_or_404(db, conversation_id)
+            ),
         )
 
     @app.put(

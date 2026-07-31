@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 
@@ -9,6 +9,7 @@ class MockSocket {
   public onopen: (() => void) | null = null;
   public onmessage: ((event: MessageEvent<string>) => void) | null = null;
   public onclose: (() => void) | null = null;
+  private closed = false;
 
   constructor(public readonly url: string) {
     MockSocket.instances.push(this);
@@ -28,7 +29,15 @@ class MockSocket {
   }
 
   close(): void {
+    if (this.closed) {
+      return;
+    }
+    this.closed = true;
     this.onclose?.();
+  }
+
+  emit(payload: unknown): void {
+    this.onmessage?.(new MessageEvent("message", { data: JSON.stringify(payload) }));
   }
 }
 
@@ -100,7 +109,32 @@ describe("App", () => {
           });
         }
         if (url.endsWith("/api/v1/conversations/conv-1")) {
-          return jsonResponse({ conversation });
+          return jsonResponse({
+            conversation,
+            runtime_authority: {
+              latest_reliable_seq: 0,
+              agents: {
+                "agent-a": {
+                  worker_state: "LISTENING",
+                  active_run_id: null,
+                  typing_status: "idle",
+                  typing_run_id: null,
+                  reliable_seq: 0,
+                  dirty_since_seq: null,
+                  updated_at: "2026-07-29T10:00:00Z",
+                },
+                "agent-b": {
+                  worker_state: "LISTENING",
+                  active_run_id: null,
+                  typing_status: "idle",
+                  typing_run_id: null,
+                  reliable_seq: 0,
+                  dirty_since_seq: null,
+                  updated_at: "2026-07-29T10:00:00Z",
+                },
+              },
+            },
+          });
         }
         if (url.endsWith("/api/v1/history")) {
           return jsonResponse({
@@ -200,6 +234,13 @@ describe("App", () => {
     );
   });
 
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
   it("blocks writes in review mode and exposes raw fallback / accessibility affordances", async () => {
     render(<App />);
     await waitFor(() => expect(screen.getByText("Monitoring")).toBeInTheDocument());
@@ -225,5 +266,44 @@ describe("App", () => {
     expect(textarea).toBeDisabled();
     expect(screen.getByRole("tablist", { name: "Inspector Tabs" })).toBeInTheDocument();
     expect(screen.getByRole("log")).toBeInTheDocument();
+  });
+
+  it("reconciles transient typing state from REST authority after disconnect and reconnects without seq changes", async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("A 私有视图")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("A 私有视图"));
+    await waitFor(() => expect(screen.getByText("idle")).toBeInTheDocument());
+
+    const firstSocket = MockSocket.instances[0];
+    expect(firstSocket).toBeDefined();
+    firstSocket.emit({
+      event_id: "evt-typing",
+      event_type: "agent.typing_started",
+      conversation_id: "conv-1",
+      conversation_seq: null,
+      payload: { agent_id: "agent-a", run_id: "run-1", reason: "decision" },
+    });
+    await waitFor(() => expect(screen.getByText("typing · decision")).toBeInTheDocument());
+
+    const setTimeoutSpy = vi
+      .spyOn(window, "setTimeout")
+      .mockImplementation((((callback: TimerHandler) => {
+        if (typeof callback === "function") {
+          callback();
+        }
+        return 1 as unknown as ReturnType<typeof window.setTimeout>;
+      }) as unknown) as typeof window.setTimeout);
+    firstSocket.close();
+    expect(setTimeoutSpy).toHaveBeenCalled();
+
+    await act(async () => {
+      for (let index = 0; index < 10; index += 1) {
+        await Promise.resolve();
+      }
+    });
+
+    expect(MockSocket.instances.length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("idle")).toBeInTheDocument();
   });
 });

@@ -14,6 +14,7 @@ import type {
   ManualScore,
   MemoryRevision,
   Message,
+  RuntimeAuthority,
   RunAttempt,
 } from "./types";
 
@@ -45,6 +46,7 @@ export interface WorkbenchPayload {
   bootstrap: BootstrapResponse;
   conversations: ConversationRead[];
   detail: ConversationRead;
+  runtimeAuthority: RuntimeAuthority | null;
   messages: Message[];
   cpRevisions: CpRevision[];
   runs: AgentRun[];
@@ -68,7 +70,10 @@ export async function loadWorkbench(
     apiBase,
     "/api/v1/conversations",
   );
-  const detailPayload = await requestJson<{ conversation: ConversationRead }>(
+  const detailPayload = await requestJson<{
+    conversation: ConversationRead;
+    runtime_authority?: RuntimeAuthority | null;
+  }>(
     apiBase,
     `/api/v1/conversations/${conversationId}`,
   );
@@ -176,6 +181,7 @@ export async function loadWorkbench(
     bootstrap,
     conversations: conversationList.items,
     detail,
+    runtimeAuthority: detailPayload.runtime_authority ?? null,
     messages: messages.items,
     cpRevisions: cpRevisions.items,
     runs: runs.items,

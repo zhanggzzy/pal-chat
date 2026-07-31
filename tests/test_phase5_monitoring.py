@@ -206,3 +206,61 @@ def test_phase5_public_ws_emits_agent_and_guardrail_events(
         )
     finally:
         ws.close()
+
+
+def test_phase5_detail_exposes_runtime_authority_for_transient_state_reconciliation(
+    live_process_server: LiveServer,
+) -> None:
+    conversation_id = configure_phase4_runtime(
+        live_process_server,
+        script=[
+            {
+                "purpose": "decision",
+                "agent_id": "agent-a",
+                "match_contains": "@A",
+                "delay_ms": 200,
+                "output_json": {"should_reply": True, "reply_key": "authority"},
+            },
+            {
+                "purpose": "action",
+                "agent_id": "agent-a",
+                "match_contains": "\"reply_key\": \"authority\"",
+                "output_json": {
+                    "content_markdown": "A authority done",
+                    "mentions": [],
+                    "primary_reply_to": None,
+                    "responds_to": [],
+                },
+            },
+        ],
+    )
+    submit_user_message(
+        live_process_server.client,
+        conversation_id,
+        client_message_id="phase5-authority-user",
+        content_markdown="@A 请开始但暂时不要结束",
+        mentions=["agent-a"],
+    )
+
+    def _agent_state() -> dict[str, Any] | None:
+        detail = live_process_server.client.get(f"/api/v1/conversations/{conversation_id}")
+        assert detail.status_code == 200
+        payload = cast(dict[str, Any], detail.json())
+        runtime_authority = cast(dict[str, Any], payload["runtime_authority"])
+        assert isinstance(runtime_authority["latest_reliable_seq"], int)
+        return cast(dict[str, Any] | None, runtime_authority["agents"].get("agent-a"))
+
+    wait_until(
+        lambda: (_agent_state() or {}).get("typing_status") == "active"
+    )
+    active_state = _agent_state()
+    assert active_state is not None
+    assert active_state["worker_state"] in {"DECIDING", "ACTING", "SUBMITTING"}
+    assert active_state["typing_run_id"] is not None
+
+    wait_until(lambda: len(agent_messages(live_process_server.client, conversation_id)) == 1)
+    wait_until(lambda: (_agent_state() or {}).get("typing_status") == "idle")
+    idle_state = _agent_state()
+    assert idle_state is not None
+    assert idle_state["worker_state"] == "LISTENING"
+    assert idle_state["typing_run_id"] is None

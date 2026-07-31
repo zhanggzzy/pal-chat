@@ -11,6 +11,21 @@ export interface ConversationRead {
   ended_at: string | null;
 }
 
+export interface RuntimeAuthorityAgentState {
+  worker_state: string;
+  active_run_id: string | null;
+  typing_status: string;
+  typing_run_id: string | null;
+  reliable_seq: number;
+  dirty_since_seq: number | null;
+  updated_at: string;
+}
+
+export interface RuntimeAuthority {
+  latest_reliable_seq: number;
+  agents: Record<string, RuntimeAuthorityAgentState>;
+}
+
 export interface BootstrapResponse {
   app_name: string;
   app_version: string;
