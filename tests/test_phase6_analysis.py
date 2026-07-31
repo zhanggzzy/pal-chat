@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import zipfile
 from pathlib import Path
 from typing import Any, cast
 
-from conftest import LiveServer
+from conftest import LiveServer, live_server_context
 from test_phase3_worker_processes import (
     agent_messages,
     default_profile_payload,
@@ -122,6 +123,21 @@ def _job_json_path(server: LiveServer, conversation_id: str, job_id: str) -> Pat
         / "analysis-jobs"
         / f"{job_id}.json"
     )
+
+
+def _fetch_transcript_row(
+    transcript: Path,
+    query: str,
+    params: tuple[object, ...] = (),
+) -> sqlite3.Row:
+    connection = sqlite3.connect(transcript)
+    connection.row_factory = sqlite3.Row
+    try:
+        row = connection.execute(query, params).fetchone()
+        assert row is not None
+        return row
+    finally:
+        connection.close()
 
 
 def test_h14_history_index_and_raw_fallback_stay_read_only(
@@ -358,3 +374,130 @@ def test_h15_analysis_export_zip_is_versioned_redacted_and_downloadable(
     after_detail = live_process_server.client.get(f"/api/v1/conversations/{conversation_id}")
     assert after_detail.status_code == 200
     assert after_detail.json()["conversation"]["status"] == "ended"
+
+
+def test_stage7_restart_recovers_pending_outbox_and_analysis_export(
+    data_dir: Path,
+) -> None:
+    with live_server_context(data_dir) as server:
+        conversation_id = _phase6_conversation(server)
+        submit_user_message(
+            server.client,
+            conversation_id,
+            client_message_id="phase7-restart-user",
+            content_markdown="@A 阶段 6",
+            mentions=["agent-a"],
+        )
+        wait_until(lambda: len(agent_messages(server.client, conversation_id)) == 1)
+        _set_sensitive_metadata(server, conversation_id)
+        _end_conversation(server, conversation_id)
+
+        root = archive_root(server, conversation_id)
+        transcript = root / "transcript.sqlite"
+        connection = sqlite3.connect(transcript)
+        try:
+            connection.execute(
+                """
+                INSERT INTO outbox_events(
+                  event_id, event_type, conversation_seq, payload_json, status,
+                  dispatch_attempts, dispatched_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "evt-stage7-recovery",
+                    "agent.typing_stopped",
+                    None,
+                    json.dumps(
+                        {
+                            "agent_id": "agent-a",
+                            "run_id": "run-recovery",
+                            "reason": "restart-recovery",
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    "pending",
+                    0,
+                    None,
+                    "2026-07-31T15:30:00+00:00",
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        job_id = "job-restart-recovery"
+        job_path = root / "exports" / "analysis-jobs" / f"{job_id}.json"
+        job_path.parent.mkdir(parents=True, exist_ok=True)
+        job_path.write_text(
+            json.dumps(
+                {
+                    "job_id": job_id,
+                    "conversation_id": conversation_id,
+                    "status": "running",
+                    "created_at": "2026-07-31T15:30:01+00:00",
+                    "updated_at": "2026-07-31T15:30:01+00:00",
+                    "download_path": None,
+                    "error": None,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    with live_server_context(data_dir) as server:
+        transcript = archive_root(server, conversation_id) / "transcript.sqlite"
+
+        def outbox_recovered() -> bool:
+            row = _fetch_transcript_row(
+                transcript,
+                """
+                SELECT dispatch_attempts, dispatched_at
+                FROM outbox_events
+                WHERE event_id = ?
+                """,
+                ("evt-stage7-recovery",),
+            )
+            return int(row["dispatch_attempts"]) == 1 and row["dispatched_at"] is not None
+
+        wait_until(outbox_recovered)
+
+        def export_recovered() -> bool:
+            response = server.client.get(
+                f"/api/v1/conversations/{conversation_id}/analysis-exports/{job_id}"
+            )
+            assert response.status_code == 200
+            return cast(str, response.json()["status"]) == "ready"
+
+        wait_until(export_recovered)
+        ready = server.client.get(
+            f"/api/v1/conversations/{conversation_id}/analysis-exports/{job_id}"
+        )
+        assert ready.status_code == 200
+        download_url = cast(str, ready.json()["download_url"])
+        downloaded = server.client.get(download_url)
+        assert downloaded.status_code == 200
+        export_path = archive_root(server, conversation_id) / "exports" / f"analysis-{job_id}.zip"
+        assert zipfile.is_zipfile(Path(export_path))
+
+    with live_server_context(data_dir) as server:
+        transcript = archive_root(server, conversation_id) / "transcript.sqlite"
+        row = _fetch_transcript_row(
+            transcript,
+            """
+            SELECT dispatch_attempts, dispatched_at
+            FROM outbox_events
+            WHERE event_id = ?
+            """,
+            ("evt-stage7-recovery",),
+        )
+        assert int(row["dispatch_attempts"]) == 1
+        assert row["dispatched_at"] is not None
+        ready = server.client.get(
+            f"/api/v1/conversations/{conversation_id}/analysis-exports/{job_id}"
+        )
+        assert ready.status_code == 200
+        assert ready.json()["status"] == "ready"

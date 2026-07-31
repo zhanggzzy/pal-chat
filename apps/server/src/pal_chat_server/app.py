@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, Request, Response, WebSocket, WebSocketDis
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
@@ -25,6 +25,7 @@ from pal_chat_server.analysis import (
     get_history_detail,
     list_history_entries,
     load_manual_score,
+    resume_analysis_export_jobs,
     save_manual_score,
 )
 from pal_chat_server.attempts import (
@@ -151,12 +152,6 @@ from pal_chat_server.services import (
 from pal_chat_server.worker_supervisor import INTERNAL_SOCKET_MANAGER, WorkerSupervisor
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    get_engine(get_settings())
-    yield
-
-
 def _catalog_bootstrap(db: Session, settings: Settings) -> None:
     ensure_default_template(db)
     sync_catalog_from_manifests(db, settings)
@@ -171,6 +166,28 @@ def _context_owner_id(context_payload: dict[str, Any]) -> str:
 def create_app() -> FastAPI:
     settings = get_settings()
     worker_supervisor = WorkerSupervisor(server_base_url=settings.server_base_url)
+
+    @asynccontextmanager
+    async def lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
+        ensure_catalog_schema(settings)
+        with get_session_factory()() as db:
+            ensure_default_template(db)
+            sync_catalog_from_manifests(db, settings)
+            conversations = list(
+                db.execute(
+                    select(ConversationRecord).where(ConversationRecord.archive_dir.is_not(None))
+                ).scalars()
+            )
+        for conversation in conversations:
+            if conversation.archive_dir is None:
+                continue
+            dispatch_pending_outbox(conversation)
+            resume_analysis_export_jobs(conversation, settings=settings)
+        try:
+            yield
+        finally:
+            app_instance.state.worker_supervisor.shutdown()
+
     app = FastAPI(
         title="pal-chat API",
         version=settings.app_version,

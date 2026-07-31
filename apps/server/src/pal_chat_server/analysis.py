@@ -609,6 +609,31 @@ def _generate_analysis_zip(
     _write_job(root, job)
 
 
+def _spawn_export_runner(
+    conversation: ConversationRecord,
+    *,
+    settings: Settings,
+    job_id: str,
+) -> None:
+    root = _require_archive_root(conversation)
+
+    def runner() -> None:
+        with _EXPORT_LOCK:
+            current = get_analysis_export_job(conversation, job_id)
+            if current["status"] == "ready":
+                return
+            current["status"] = "running"
+            current["updated_at"] = utc_now().isoformat()
+            _write_job(root, current)
+            _generate_analysis_zip(
+                conversation=conversation,
+                settings=settings,
+                job_id=job_id,
+            )
+
+    threading.Thread(target=runner, daemon=True).start()
+
+
 def create_analysis_export_job(
     conversation: ConversationRecord,
     *,
@@ -625,21 +650,31 @@ def create_analysis_export_job(
         download_path=None,
     )
     _write_job(root, payload)
-
-    def runner() -> None:
-        with _EXPORT_LOCK:
-            current = get_analysis_export_job(conversation, job_id)
-            current["status"] = "running"
-            current["updated_at"] = utc_now().isoformat()
-            _write_job(root, current)
-            _generate_analysis_zip(
-                conversation=conversation,
-                settings=settings,
-                job_id=job_id,
-            )
-
-    threading.Thread(target=runner, daemon=True).start()
+    _spawn_export_runner(conversation, settings=settings, job_id=job_id)
     return payload
+
+
+def resume_analysis_export_jobs(
+    conversation: ConversationRecord,
+    *,
+    settings: Settings,
+) -> list[str]:
+    root = _require_archive_root(conversation)
+    job_root = _job_dir(root)
+    resumed: list[str] = []
+    for path in sorted(job_root.glob("*.json")):
+        payload = _json_read(path)
+        if str(payload.get("conversation_id")) != conversation.id:
+            continue
+        if payload.get("status") not in {"queued", "running"}:
+            continue
+        payload["status"] = "queued"
+        payload["updated_at"] = utc_now().isoformat()
+        _write_job(root, payload)
+        job_id = str(payload["job_id"])
+        _spawn_export_runner(conversation, settings=settings, job_id=job_id)
+        resumed.append(job_id)
+    return resumed
 
 
 def analysis_export_download_path(conversation: ConversationRecord, job_id: str) -> Path:

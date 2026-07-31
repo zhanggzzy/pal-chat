@@ -532,6 +532,10 @@ def test_h06_live_interruption_invalidates_stale_draft_and_cancels_typing(
         run_ids[0]: ["agent.typing_started", "agent.typing_stopped"],
         run_ids[1]: ["agent.typing_started", "agent.typing_stopped"],
     }, json.dumps(trace, ensure_ascii=False, indent=2, sort_keys=True)
+    attempts = attempt_rows(conversation_id)
+    assert [row["phase"] for row in attempts].count("reconsideration") == 1
+    reconsideration = next(row for row in attempts if row["phase"] == "reconsideration")
+    assert reconsideration["status"] == "succeeded"
     final_state = runtime_state_for_agent(conversation_id, "agent-a")
     assert final_state is not None
     assert final_state == {
@@ -1040,6 +1044,67 @@ def test_h11_live_retryable_attempts_are_persisted_and_eventually_commit(
         "reliable_seq": 2,
         "dirty_since_seq": None,
     }
+
+
+def test_stage7_live_repair_attempt_is_ledgered_and_commits(
+    live_process_server: LiveServer,
+) -> None:
+    conversation_id = configure_runtime(
+        live_process_server,
+        script=[
+            {
+                "purpose": "decision",
+                "agent_id": "agent-a",
+                "output_json": {"should_reply": True, "reason_codes": ["repair-path"]},
+            },
+            {
+                "purpose": "action",
+                "agent_id": "agent-a",
+                "output_text": "not valid json",
+            },
+            {
+                "purpose": "repair",
+                "agent_id": "agent-a",
+                "output_json": {
+                    "content_markdown": "Repair 后成功提交",
+                    "mentions": [],
+                    "primary_reply_to": None,
+                    "responds_to": [],
+                },
+            },
+        ],
+        timing={"base_wait_ms": 0, "per_char_wait_ms": 0},
+    )
+    submit_user_message(
+        live_process_server.client,
+        conversation_id,
+        client_message_id="repair-user",
+        content_markdown="@A 触发 repair",
+        mentions=["agent-a"],
+    )
+    wait_until(
+        lambda: [
+            message["content_markdown"]
+            for message in agent_messages(live_process_server.client, conversation_id)
+        ]
+        == ["Repair 后成功提交"]
+    )
+    wait_until(lambda: run_statuses(conversation_id) == ["COMMITTED"])
+
+    attempts = attempt_rows(conversation_id)
+    assert [(row["phase"], row["status"]) for row in attempts] == [
+        ("projection", "succeeded"),
+        ("decision", "succeeded"),
+        ("action", "failed"),
+        ("repair", "succeeded"),
+        ("projection", "succeeded"),
+    ]
+    failed_action = next(row for row in attempts if row["phase"] == "action")
+    assert failed_action["error_code"] == "INVALID_OUTPUT"
+    assert failed_action["error_class"] == "invalid_output"
+    repair_attempt = next(row for row in attempts if row["phase"] == "repair")
+    assert repair_attempt["status"] == "succeeded"
+    wait_until(lambda: agent_is_listening(conversation_id, "agent-a"))
 
 
 def test_h11_live_non_retryable_failure_converges_without_public_commit(
