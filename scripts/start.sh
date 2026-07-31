@@ -34,7 +34,7 @@ nohup uv run uvicorn pal_chat_server.main:app --app-dir apps/server/src --host 1
 api_pid=$!
 echo "$api_pid" >"$API_PID_FILE"
 
-nohup npm --prefix apps/web run dev -- --host 127.0.0.1 --port "$WEB_PORT" --strictPort >>"$WEB_LOG" 2>&1 < /dev/null &
+nohup env VITE_API_BASE="http://127.0.0.1:${API_PORT}" npm --prefix apps/web run dev -- --host 127.0.0.1 --port "$WEB_PORT" --strictPort >>"$WEB_LOG" 2>&1 < /dev/null &
 web_pid=$!
 echo "$web_pid" >"$WEB_PID_FILE"
 

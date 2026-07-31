@@ -11,7 +11,7 @@ API_PID_FILE="$RUNTIME_DIR/api.pid"
 WEB_PID_FILE="$RUNTIME_DIR/web.pid"
 API_LOG="$ROOT_DIR/var/log/api.log"
 WEB_LOG="$ROOT_DIR/var/log/web.log"
-CURRENT_DATA_ROOT="$ROOT_DIR/var/runtime-data/current"
+CURRENT_DATA_ROOT="${PAL_CHAT_DATA_DIR:-$ROOT_DIR/var/runtime-data/current}"
 LEGACY_DATA_ROOT="$ROOT_DIR/var/data"
 
 ensure_runtime_dirs() {
@@ -55,6 +55,7 @@ export PAL_CHAT_CORS_ORIGINS='["http://127.0.0.1:${WEB_PORT}","http://localhost:
 export PAL_CHAT_API_PORT="$API_PORT"
 export PAL_CHAT_WEB_PORT="$WEB_PORT"
 export PAL_CHAT_LEGACY_DATA_ROOT="$LEGACY_DATA_ROOT"
+export PAL_CHAT_SERVER_BASE_URL="http://127.0.0.1:${API_PORT}"
 EOF
 }
 

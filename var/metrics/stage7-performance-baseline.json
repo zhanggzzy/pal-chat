@@ -1,0 +1,48 @@
+{
+  "generated_at": "2026-07-31T18:10:13.203500+00:00",
+  "conversation_id": "01KYWNX74JJYRW6SS6CEZ56CVP",
+  "exit_samples": [
+    {
+      "name": "ui_sidebar_select_1440x900",
+      "threshold_ms": 100,
+      "avg_ms": 193.85,
+      "p95_ms": 383.86,
+      "runs": 8,
+      "note": "Playwright headless; selects representative primary conversation from sidebar."
+    },
+    {
+      "name": "message_commit_non_model",
+      "threshold_ms": 50,
+      "avg_ms": 53.67,
+      "p95_ms": 67.5,
+      "runs": 20,
+      "note": "User message commit without mentions; no provider call should occur."
+    },
+    {
+      "name": "messages_recent_1000",
+      "threshold_ms": 200,
+      "avg_ms": 62.78,
+      "p95_ms": 742.45,
+      "runs": 20,
+      "note": "Reads the latest 1000 public messages from the representative conversation."
+    }
+  ],
+  "auxiliary_samples": [
+    {
+      "name": "ready_health",
+      "threshold_ms": 200,
+      "avg_ms": 0.85,
+      "p95_ms": 1.08,
+      "runs": 20,
+      "note": "Service health baseline under the seeded dataset."
+    },
+    {
+      "name": "cost_breakdown",
+      "threshold_ms": 200,
+      "avg_ms": 10.78,
+      "p95_ms": 12.27,
+      "runs": 20,
+      "note": "Auxiliary monitoring endpoint on the same representative conversation."
+    }
+  ]
+}

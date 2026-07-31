@@ -1,0 +1,31 @@
+name: stage7-windows-validation
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+      - agent/neo/OT-41-phase1-skeleton
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Validate PowerShell runtime scripts
+        shell: pwsh
+        run: ./scripts/validate-stage7.ps1

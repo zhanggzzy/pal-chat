@@ -673,6 +673,44 @@ def create_app() -> FastAPI:
         _catalog_bootstrap(db, settings)
         return ConversationListResponse(items=list_conversations(db))
 
+    @app.get(
+        "/api/v1/conversations/{conversation_id}/workbench",
+        tags=["conversations"],
+    )
+    def get_conversation_workbench(
+        conversation_id: str,
+        db: Session = Depends(get_db_session),
+    ) -> dict[str, Any]:
+        _catalog_bootstrap(db, settings)
+        conversation, validation, manifest = get_conversation_detail(
+            db,
+            conversation_id=conversation_id,
+            settings=settings,
+        )
+        runtime_authority = public_runtime_authority(
+            get_conversation_or_404(db, conversation_id)
+        )
+        detail = conversation
+        has_archive = detail.archive_dir is not None and detail.status != "draft"
+        payload: dict[str, Any] = {
+            "detail": {
+                "conversation": conversation.model_dump(mode="json"),
+                "validation": validation.model_dump(mode="json"),
+                "manifest": manifest,
+                "runtime_authority": runtime_authority,
+            },
+            "messages": [],
+        }
+        if not has_archive:
+            return payload
+        conversation_record = get_conversation_or_404(db, conversation_id)
+        payload["messages"] = list_messages(
+            conversation_record,
+            after_seq=0,
+            limit=1000,
+        )
+        return payload
+
     @app.post(
         "/api/v1/conversations",
         response_model=ConversationRead,
@@ -1006,7 +1044,7 @@ def create_app() -> FastAPI:
         items = list_messages(
             conversation,
             after_seq=max(after_seq, 0),
-            limit=max(1, min(limit, 500)),
+            limit=max(1, min(limit, 1000)),
         )
         return MessageListResponse(items=[MessageRead.model_validate(item) for item in items])
 

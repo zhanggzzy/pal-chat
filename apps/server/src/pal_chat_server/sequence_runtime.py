@@ -14,7 +14,7 @@ from typing import Any
 
 from fastapi import WebSocket
 
-from pal_chat_server.archive import append_observation, transcript_path
+from pal_chat_server.archive import append_observations, transcript_path
 from pal_chat_server.clock import Clock, RealClock
 from pal_chat_server.contracts import ModelRequest
 from pal_chat_server.errors import AppError
@@ -537,35 +537,57 @@ def update_segment_with_message(
     return snapshot
 
 
-def build_message_record(row: sqlite3.Row, connection: sqlite3.Connection) -> dict[str, Any]:
-    mentions = [
-        mention["member_id"]
-        for mention in connection.execute(
-            "SELECT member_id FROM message_mentions WHERE message_id = ? ORDER BY member_id",
-            (row["message_id"],),
-        ).fetchall()
-    ]
-    responds_to = [
-        ref["responds_to_message_id"]
-        for ref in connection.execute(
-            """
-            SELECT responds_to_message_id
-            FROM message_response_refs
-            WHERE message_id = ?
-            ORDER BY ordinal
-            """,
-            (row["message_id"],),
-        ).fetchall()
-    ]
+def _grouped_message_metadata(
+    connection: sqlite3.Connection,
+    message_ids: list[str],
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    if not message_ids:
+        return {}, {}
+    placeholders = ",".join("?" for _ in message_ids)
+    mentions_by_message: dict[str, list[str]] = {message_id: [] for message_id in message_ids}
+    responds_to_by_message: dict[str, list[str]] = {
+        message_id: [] for message_id in message_ids
+    }
+    for row in connection.execute(
+        f"""
+        SELECT message_id, member_id
+        FROM message_mentions
+        WHERE message_id IN ({placeholders})
+        ORDER BY message_id, member_id
+        """,
+        message_ids,
+    ).fetchall():
+        mentions_by_message[str(row["message_id"])].append(str(row["member_id"]))
+    for row in connection.execute(
+        f"""
+        SELECT message_id, responds_to_message_id
+        FROM message_response_refs
+        WHERE message_id IN ({placeholders})
+        ORDER BY message_id, ordinal
+        """,
+        message_ids,
+    ).fetchall():
+        responds_to_by_message[str(row["message_id"])].append(
+            str(row["responds_to_message_id"])
+        )
+    return mentions_by_message, responds_to_by_message
+
+
+def build_message_record(
+    row: sqlite3.Row,
+    *,
+    mentions: list[str],
+    responds_to: list[str],
+) -> dict[str, Any]:
     return {
         "message_id": row["message_id"],
         "conversation_seq": int(row["conversation_seq"]),
         "sender_kind": row["sender_kind"],
         "sender_id": row["sender_id"],
         "content_markdown": row["content_markdown"],
-        "mentions": mentions,
+        "mentions": list(mentions),
         "primary_reply_to": row["primary_reply_to"],
-        "responds_to": responds_to,
+        "responds_to": list(responds_to),
         "client_message_id": row["client_message_id"],
         "causal_episode_id": row["causal_episode_id"],
         "caused_by_message_id": row["caused_by_message_id"],
@@ -601,7 +623,18 @@ def list_messages(
             """,
             (after_seq, limit),
         ).fetchall()
-        return [build_message_record(row, connection) for row in rows]
+        message_ids = [str(row["message_id"]) for row in rows]
+        mentions_by_message, responds_to_by_message = _grouped_message_metadata(
+            connection, message_ids
+        )
+        return [
+            build_message_record(
+                row,
+                mentions=mentions_by_message.get(str(row["message_id"]), []),
+                responds_to=responds_to_by_message.get(str(row["message_id"]), []),
+            )
+            for row in rows
+        ]
 
 
 def list_cp_revisions(conversation: ConversationRecord) -> list[dict[str, Any]]:
@@ -1092,7 +1125,11 @@ def commit_message(
                 (message_id,),
             ).fetchone()
             assert message_row is not None
-            message = build_message_record(message_row, connection)
+            message = build_message_record(
+                message_row,
+                mentions=payload.mentions,
+                responds_to=payload.responds_to,
+            )
             cp_revision = {
                 "projection_revision": projection_result.next_revision,
                 "covered_through_seq": next_seq,
@@ -1148,6 +1185,7 @@ def dispatch_pending_outbox(
     emitted: list[dict[str, Any]] = []
     now = utc_now(clock).isoformat()
     root = Path(conversation.archive_dir or "")
+    observations: list[dict[str, Any]] = []
     with connect_transcript(conversation) as connection:
         connection.execute("BEGIN IMMEDIATE")
         rows = connection.execute(
@@ -1171,8 +1209,7 @@ def dispatch_pending_outbox(
             emitted.append(event)
             SOCKET_MANAGER.publish(conversation.id, event)
             if root:
-                append_observation(
-                    root / "observations.ndjson",
+                observations.append(
                     {
                         "archive_schema_version": 1,
                         "record_id": generate_ulid(),
@@ -1190,7 +1227,7 @@ def dispatch_pending_outbox(
                             "event_type": row["event_type"],
                         },
                         "checksum": f"sha256:{row['event_id']}",
-                    },
+                    }
                 )
             connection.execute(
                 """
@@ -1201,4 +1238,6 @@ def dispatch_pending_outbox(
                 ("dispatched", now, row["event_id"]),
             )
         connection.commit()
+    if root:
+        append_observations(root / "observations.ndjson", observations)
     return emitted

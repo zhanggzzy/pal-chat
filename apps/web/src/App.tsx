@@ -3,7 +3,9 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   createAnalysisExport,
   getAnalysisExport,
+  loadAgentInspector,
   loadHistoryDetail,
+  loadServerInspector,
   loadWorkbench,
   requestJson,
   saveManualScore,
@@ -129,6 +131,9 @@ function RawJsonCard({
 }
 
 export function App(): JSX.Element {
+  const serverInspectorCacheRef = useRef<
+    Record<string, Awaited<ReturnType<typeof loadServerInspector>>>
+  >({});
   const [apiBase, setApiBase] = useState(fallbackUrl());
   const [conversations, setConversations] = useState<ConversationRead[]>([]);
   const [conversation, setConversation] = useState<ConversationRead | null>(null);
@@ -150,6 +155,7 @@ export function App(): JSX.Element {
   const [selectedMessageId, setSelectedMessageId] = useState<string>("");
   const [selectedRunId, setSelectedRunId] = useState<string>("");
   const [selectedInspector, setSelectedInspector] = useState<InspectorView>("server");
+  const [visibleMessageLimit, setVisibleMessageLimit] = useState(200);
   const [reviewState, setReviewState] = useState<ReviewState | null>(null);
   const [guardrailsDraft, setGuardrailsDraft] = useState<RuntimeGuardrails | null>(null);
   const [composer, setComposer] = useState("");
@@ -173,38 +179,130 @@ export function App(): JSX.Element {
   );
   const profiles = agentProfiles(conversation);
 
-  async function refreshConversation(conversationId: string): Promise<void> {
-    setStatusText("同步工作台");
-    const payload = await loadWorkbench(apiBase, conversationId);
-    setConversations(payload.conversations);
-    setConversation(payload.detail);
-    setMessages(payload.messages);
+  function applyServerInspectorPayload(
+    payload: Awaited<ReturnType<typeof loadServerInspector>>,
+  ): void {
     setCpRevisions(payload.cpRevisions);
     setRuns(payload.runs);
     setLogs(payload.logs);
     setCosts(payload.costs);
-    setMemoryByAgent(payload.memoryByAgent);
-    setContextByAgent(payload.contextByAgent);
-    setAttemptsByAgent(payload.attemptsByAgent);
     setAutomaticMetrics(payload.automaticMetrics);
     setManualScore(normalizeManualScore(payload.manualScore));
-    setHistoryEntries(payload.history);
-    if (!selectedHistoryId && payload.history.length > 0) {
-      setSelectedHistoryId(payload.history[0].conversation_id);
-    }
+    setRuntimeState((current) => ({
+      ...current,
+      cpRevisions: payload.cpRevisions,
+      runs: payload.runs,
+      latestCpRevision:
+        payload.cpRevisions.at(-1)?.projection_revision ?? current.latestCpRevision,
+    }));
+  }
+
+  function applyWorkbenchPayload(
+    payload: Awaited<ReturnType<typeof loadWorkbench>>,
+  ): void {
+    setConversation(payload.detail);
+    setMessages(payload.messages);
+    setCpRevisions([]);
+    setRuns([]);
+    setLogs([]);
+    setCosts(null);
+    setAutomaticMetrics(null);
+    setManualScore(null);
+    setMemoryByAgent({});
+    setContextByAgent({});
+    setAttemptsByAgent({});
     setGuardrailsDraft(payload.detail.guardrails);
     setRuntimeState({
       ...emptyRuntimeViewState(),
       messages: payload.messages,
-      cpRevisions: payload.cpRevisions,
-      runs: payload.runs,
+      cpRevisions: [],
+      runs: [],
       latestSeq: payload.messages.at(-1)?.conversation_seq ?? 0,
-      latestCpRevision: payload.cpRevisions.at(-1)?.projection_revision ?? 0,
+      latestCpRevision: 0,
       guardrails: payload.detail.guardrails,
       typing: typingFromAuthority(payload.runtimeAuthority),
     });
+  }
+
+  async function refreshConversation(conversationId: string): Promise<void> {
+    const preview = conversations.find((item) => item.id === conversationId) ?? null;
+    if (preview) {
+      setConversation(preview);
+      setGuardrailsDraft(preview.guardrails);
+    }
+    const cachedInspector = serverInspectorCacheRef.current[conversationId];
+    if (cachedInspector) {
+      applyServerInspectorPayload(cachedInspector);
+    }
+    setVisibleMessageLimit(200);
+    setStatusText("同步工作台");
+    const payload = await loadWorkbench(apiBase, conversationId);
+    applyWorkbenchPayload(payload);
     setStatusText("已同步");
   }
+
+  useEffect(() => {
+    if (!conversation || !profiles || selectedInspector === "server") {
+      return;
+    }
+    const agent = selectedInspector === "agent-a" ? profiles[0] : profiles[1];
+    if (
+      memoryByAgent[agent.agent_id] !== undefined &&
+      contextByAgent[agent.agent_id] !== undefined &&
+      attemptsByAgent[agent.agent_id] !== undefined
+    ) {
+      return;
+    }
+    void loadAgentInspector(apiBase, conversation.id, agent.agent_id)
+      .then((payload) => {
+        setMemoryByAgent((current) => ({ ...current, [agent.agent_id]: payload.memory }));
+        setContextByAgent((current) => ({
+          ...current,
+          [agent.agent_id]: payload.contextBundles,
+        }));
+        setAttemptsByAgent((current) => ({
+          ...current,
+          [agent.agent_id]: payload.attempts,
+        }));
+      })
+      .catch((error: unknown) => {
+        setErrorText(error instanceof Error ? error.message : "私有视图读取失败");
+      });
+  }, [
+    apiBase,
+    attemptsByAgent,
+    contextByAgent,
+    conversation,
+    memoryByAgent,
+    profiles,
+    selectedInspector,
+  ]);
+
+  useEffect(() => {
+    if (!conversation?.id) {
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void loadServerInspector(apiBase, conversation.id)
+        .then((payload) => {
+          if (cancelled) {
+            return;
+          }
+          serverInspectorCacheRef.current[conversation.id] = payload;
+          applyServerInspectorPayload(payload);
+        })
+        .catch((error: unknown) => {
+          if (!cancelled) {
+            setErrorText(error instanceof Error ? error.message : "公共视图读取失败");
+          }
+        });
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [apiBase, conversation?.id]);
 
   useEffect(() => {
     runtimeStateRef.current = runtimeState;
@@ -215,11 +313,15 @@ export function App(): JSX.Element {
     (async () => {
       try {
         setErrorText(null);
-        const list = await requestJson<{ items: ConversationRead[] }>(apiBase, "/api/v1/conversations");
+        const [list, historyPayload] = await Promise.all([
+          requestJson<{ items: ConversationRead[] }>(apiBase, "/api/v1/conversations"),
+          requestJson<{ items: HistoryEntry[] }>(apiBase, "/api/v1/history"),
+        ]);
         if (cancelled) {
           return;
         }
         setConversations(list.items);
+        setHistoryEntries(historyPayload.items);
         const target =
           list.items.find((item) => item.status === "running") ??
           list.items.find((item) => item.status === "ended") ??
@@ -273,7 +375,6 @@ export function App(): JSX.Element {
     socketRef.current = socket;
     socket.addEventListener("open", () => {
       setWsBanner(null);
-      void refreshConversation(selectedConversationId).catch(() => undefined);
     });
     socket.addEventListener("message", (incoming) => {
       const payload = JSON.parse(incoming.data) as OutboxEvent | SessionSnapshot;
@@ -476,6 +577,7 @@ export function App(): JSX.Element {
   }
 
   const visibleMessages = displayMessages();
+  const renderedMessages = visibleMessages.slice(-visibleMessageLimit);
   const liveReadOnly = reviewState !== null || conversation?.status !== "running";
   const latestCp = cpRevisions.at(-1) ?? null;
   const currentTyping = runtimeState.typing;
@@ -484,7 +586,7 @@ export function App(): JSX.Element {
     <div className="shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">pal-chat / phase 6</p>
+          <p className="eyebrow">pal-chat / phase 7</p>
           <h1>监控工作台</h1>
         </div>
         <label className="endpoint">
@@ -583,8 +685,25 @@ export function App(): JSX.Element {
               {liveReadOnly ? "只读" : "live"}
             </span>
           </div>
+          {visibleMessages.length > renderedMessages.length ? (
+            <div className="message-window-banner">
+              <span>
+                显示最近 {renderedMessages.length} / {visibleMessages.length} 条消息
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setVisibleMessageLimit((current) =>
+                    Math.min(visibleMessages.length, current + 200),
+                  )
+                }
+              >
+                加载更早消息
+              </button>
+            </div>
+          ) : null}
           <div className="message-log" role="log" aria-live="polite">
-            {visibleMessages.map((message) => (
+            {renderedMessages.map((message) => (
               <button
                 key={message.message_id}
                 type="button"

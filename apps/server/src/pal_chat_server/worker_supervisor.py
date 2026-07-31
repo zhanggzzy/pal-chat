@@ -76,16 +76,37 @@ class InternalWorkerSocketManager:
         *,
         target_agent_id: str | None = None,
     ) -> None:
+        def handle_delivery_result(
+            future: asyncio.Future[Any],
+            *,
+            current_conversation_id: str,
+            current_agent_id: str,
+        ) -> None:
+            try:
+                future.result()
+            except Exception:
+                self.disconnect(current_conversation_id, current_agent_id)
+
         with self._lock:
             current = dict(self._connections.get(conversation_id, {}))
         for agent_id, (websocket, loop) in current.items():
             if target_agent_id is not None and agent_id != target_agent_id:
                 continue
             future = asyncio.run_coroutine_threadsafe(websocket.send_json(event), loop)
-            try:
-                future.result(timeout=1)
-            except Exception:
-                self.disconnect(conversation_id, agent_id)
+            
+            def callback(
+                done: asyncio.Future[Any],
+                *,
+                current_conversation_id: str = conversation_id,
+                current_agent_id: str = agent_id,
+            ) -> None:
+                handle_delivery_result(
+                    done,
+                    current_conversation_id=current_conversation_id,
+                    current_agent_id=current_agent_id,
+                )
+
+            future.add_done_callback(callback)
 
 
 INTERNAL_SOCKET_MANAGER = InternalWorkerSocketManager()

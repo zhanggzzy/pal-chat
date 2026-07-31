@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $RootDir = Split-Path -Parent $PSScriptRoot
 $ApiPort = if ($env:PAL_CHAT_API_PORT) { $env:PAL_CHAT_API_PORT } else { "8000" }
 $WebPort = if ($env:PAL_CHAT_WEB_PORT) { $env:PAL_CHAT_WEB_PORT } else { "5173" }
-$CurrentDataRoot = Join-Path $RootDir "var/runtime-data/current"
+$CurrentDataRoot = if ($env:PAL_CHAT_DATA_DIR) { $env:PAL_CHAT_DATA_DIR } else { Join-Path $RootDir "var/runtime-data/current" }
 $LegacyDataRoot = Join-Path $RootDir "var/data"
 
 $pythonVersion = & py -3.12 --version
@@ -25,6 +25,8 @@ if (!(Test-Path (Join-Path $RootDir ".env"))) {
 }
 
 Push-Location $RootDir
+ $env:PAL_CHAT_DATA_DIR = $CurrentDataRoot
+ $env:PAL_CHAT_SERVER_BASE_URL = "http://127.0.0.1:$ApiPort"
 uv sync --group dev
 npm --prefix apps/web ci
 uv run alembic upgrade head

@@ -284,6 +284,15 @@ def append_observation(path: Path, payload: dict[str, Any]) -> None:
         handle.write("\n")
 
 
+def append_observations(path: Path, payloads: list[dict[str, Any]]) -> None:
+    if not payloads:
+        return
+    with path.open("a", encoding="utf-8") as handle:
+        for payload in payloads:
+            handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+            handle.write("\n")
+
+
 def transcript_path(root: Path) -> Path:
     return root / "transcript.sqlite"
 

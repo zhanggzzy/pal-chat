@@ -2,7 +2,6 @@ import type {
   AnalysisExportJob,
   AgentRun,
   AutomaticMetrics,
-  BootstrapResponse,
   CausalEpisode,
   ContextBundle,
   ConversationRead,
@@ -43,158 +42,119 @@ export async function requestJson<T>(
 }
 
 export interface WorkbenchPayload {
-  bootstrap: BootstrapResponse;
-  conversations: ConversationRead[];
   detail: ConversationRead;
   runtimeAuthority: RuntimeAuthority | null;
   messages: Message[];
-  cpRevisions: CpRevision[];
-  runs: AgentRun[];
-  logs: LogEntry[];
-  episodes: CausalEpisode[];
-  costs: CostBreakdown;
-  memoryByAgent: Record<string, MemoryRevision[]>;
-  contextByAgent: Record<string, ContextBundle[]>;
-  attemptsByAgent: Record<string, RunAttempt[]>;
-  automaticMetrics: AutomaticMetrics | null;
-  manualScore: ManualScore | null;
-  history: HistoryEntry[];
 }
 
 export async function loadWorkbench(
   apiBase: string,
   conversationId: string,
 ): Promise<WorkbenchPayload> {
-  const bootstrap = await requestJson<BootstrapResponse>(apiBase, "/api/v1/bootstrap");
-  const conversationList = await requestJson<{ items: ConversationRead[] }>(
-    apiBase,
-    "/api/v1/conversations",
-  );
-  const detailPayload = await requestJson<{
-    conversation: ConversationRead;
-    runtime_authority?: RuntimeAuthority | null;
-  }>(
-    apiBase,
-    `/api/v1/conversations/${conversationId}`,
-  );
-  const detail = detailPayload.conversation;
-  const hasArchive = detail.status !== "draft";
-  const agentIds = [
-    detail.locked_profile?.agent_a.agent_id ?? detail.draft_profile.agent_a.agent_id,
-    detail.locked_profile?.agent_b.agent_id ?? detail.draft_profile.agent_b.agent_id,
-  ];
+  const payload = await requestJson<{
+    detail: {
+      conversation: ConversationRead;
+      runtime_authority?: RuntimeAuthority | null;
+    };
+    messages: Message[];
+  }>(apiBase, `/api/v1/conversations/${conversationId}/workbench`);
 
+  return {
+    detail: payload.detail.conversation,
+    runtimeAuthority: payload.detail.runtime_authority ?? null,
+    messages: payload.messages,
+  };
+}
+
+export interface ServerInspectorPayload {
+  cpRevisions: CpRevision[];
+  runs: AgentRun[];
+  logs: LogEntry[];
+  episodes: CausalEpisode[];
+  costs: CostBreakdown;
+  automaticMetrics: AutomaticMetrics | null;
+  manualScore: ManualScore | null;
+}
+
+export async function loadServerInspector(
+  apiBase: string,
+  conversationId: string,
+): Promise<ServerInspectorPayload> {
   const [
-    messages,
     cpRevisions,
     runs,
     logs,
     episodes,
     costs,
-    memoryByAgent,
-    contextByAgent,
-    attemptsByAgent,
     automaticMetrics,
     manualScore,
-    history,
-  ] =
-    await Promise.all([
-      hasArchive
-        ? requestJson<{ items: Message[] }>(apiBase, `/api/v1/conversations/${conversationId}/messages`)
-        : Promise.resolve({ items: [] }),
-      hasArchive
-        ? requestJson<{ items: CpRevision[] }>(apiBase, `/api/v1/conversations/${conversationId}/cp-revisions`)
-        : Promise.resolve({ items: [] }),
-      hasArchive
-        ? requestJson<{ items: AgentRun[] }>(apiBase, `/api/v1/conversations/${conversationId}/runs`)
-        : Promise.resolve({ items: [] }),
-      hasArchive
-        ? requestJson<{ items: LogEntry[] }>(apiBase, `/api/v1/conversations/${conversationId}/logs`)
-        : Promise.resolve({ items: [] }),
-      hasArchive
-        ? requestJson<{ items: CausalEpisode[] }>(
-            apiBase,
-            `/api/v1/conversations/${conversationId}/causal-episodes`,
-          )
-        : Promise.resolve({ items: [] }),
-      hasArchive
-        ? requestJson<CostBreakdown>(
-            apiBase,
-            `/api/v1/conversations/${conversationId}/metrics/cost-breakdown`,
-          )
-        : Promise.resolve({ total_tokens: 0, total_cost_usd: 0, by_agent: {}, by_phase: {} }),
-      hasArchive
-        ? Promise.all(
-            agentIds.map(async (agentId) => [
-              agentId,
-              (
-                await requestJson<{ items: MemoryRevision[] }>(
-                  apiBase,
-                  `/api/v1/conversations/${conversationId}/agents/${agentId}/memory/revisions`,
-                )
-              ).items,
-            ]),
-          ).then((entries) => Object.fromEntries(entries))
-        : Promise.resolve({}),
-      hasArchive
-        ? Promise.all(
-            agentIds.map(async (agentId) => [
-              agentId,
-              (
-                await requestJson<{ items: ContextBundle[] }>(
-                  apiBase,
-                  `/api/v1/conversations/${conversationId}/agents/${agentId}/context-bundles`,
-                )
-              ).items,
-            ]),
-          ).then((entries) => Object.fromEntries(entries))
-        : Promise.resolve({}),
-      hasArchive
-        ? Promise.all(
-            agentIds.map(async (agentId) => [
-              agentId,
-              (
-                await requestJson<{ items: RunAttempt[] }>(
-                  apiBase,
-                  `/api/v1/conversations/${conversationId}/agents/${agentId}/attempts`,
-                )
-              ).items,
-            ]),
-          ).then((entries) => Object.fromEntries(entries))
-        : Promise.resolve({}),
-      hasArchive
-        ? requestJson<AutomaticMetrics>(
-            apiBase,
-            `/api/v1/conversations/${conversationId}/metrics/automatic`,
-          )
-        : Promise.resolve(null),
-      hasArchive
-        ? requestJson<ManualScore>(
-            apiBase,
-            `/api/v1/conversations/${conversationId}/manual-score`,
-          )
-        : Promise.resolve(null),
-      requestJson<{ items: HistoryEntry[] }>(apiBase, "/api/v1/history").then((payload) => payload.items),
-    ]);
-
+  ] = await Promise.all([
+    requestJson<{ items: CpRevision[] }>(
+      apiBase,
+      `/api/v1/conversations/${conversationId}/cp-revisions`,
+    ).then((payload) => payload.items),
+    requestJson<{ items: AgentRun[] }>(
+      apiBase,
+      `/api/v1/conversations/${conversationId}/runs`,
+    ).then((payload) => payload.items),
+    requestJson<{ items: LogEntry[] }>(
+      apiBase,
+      `/api/v1/conversations/${conversationId}/logs`,
+    ).then((payload) => payload.items),
+    requestJson<{ items: CausalEpisode[] }>(
+      apiBase,
+      `/api/v1/conversations/${conversationId}/causal-episodes`,
+    ).then((payload) => payload.items),
+    requestJson<CostBreakdown>(
+      apiBase,
+      `/api/v1/conversations/${conversationId}/metrics/cost-breakdown`,
+    ),
+    requestJson<AutomaticMetrics | null>(
+      apiBase,
+      `/api/v1/conversations/${conversationId}/metrics/automatic`,
+    ),
+    requestJson<ManualScore | null>(
+      apiBase,
+      `/api/v1/conversations/${conversationId}/manual-score`,
+    ),
+  ]);
   return {
-    bootstrap,
-    conversations: conversationList.items,
-    detail,
-    runtimeAuthority: detailPayload.runtime_authority ?? null,
-    messages: messages.items,
-    cpRevisions: cpRevisions.items,
-    runs: runs.items,
-    logs: logs.items,
-    episodes: episodes.items,
+    cpRevisions,
+    runs,
+    logs,
+    episodes,
     costs,
-    memoryByAgent,
-    contextByAgent,
-    attemptsByAgent,
     automaticMetrics,
     manualScore,
-    history,
   };
+}
+
+export interface AgentInspectorPayload {
+  memory: MemoryRevision[];
+  contextBundles: ContextBundle[];
+  attempts: RunAttempt[];
+}
+
+export async function loadAgentInspector(
+  apiBase: string,
+  conversationId: string,
+  agentId: string,
+): Promise<AgentInspectorPayload> {
+  const [memory, contextBundles, attempts] = await Promise.all([
+    requestJson<{ items: MemoryRevision[] }>(
+      apiBase,
+      `/api/v1/conversations/${conversationId}/agents/${agentId}/memory/revisions`,
+    ).then((payload) => payload.items),
+    requestJson<{ items: ContextBundle[] }>(
+      apiBase,
+      `/api/v1/conversations/${conversationId}/agents/${agentId}/context-bundles`,
+    ).then((payload) => payload.items),
+    requestJson<{ items: RunAttempt[] }>(
+      apiBase,
+      `/api/v1/conversations/${conversationId}/agents/${agentId}/attempts`,
+    ).then((payload) => payload.items),
+  ]);
+  return { memory, contextBundles, attempts };
 }
 
 export async function loadHistoryDetail(
