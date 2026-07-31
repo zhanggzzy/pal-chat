@@ -52,10 +52,18 @@ function asJson(value: unknown): string {
 }
 
 function fallbackUrl(): string {
+  const envApiBase = import.meta.env.VITE_API_BASE;
+  if (typeof envApiBase === "string" && envApiBase.length > 0) {
+    return envApiBase;
+  }
   if (typeof window !== "undefined" && window.location.origin.startsWith("http")) {
-    return window.location.origin === "http://localhost:5173"
-      ? "http://127.0.0.1:8000"
-      : window.location.origin;
+    const url = new URL(window.location.origin);
+    const localHosts = new Set(["localhost", "127.0.0.1"]);
+    if (localHosts.has(url.hostname) && new Set(["4173", "5173"]).has(url.port)) {
+      url.port = "8000";
+      return url.toString().replace(/\/$/, "");
+    }
+    return window.location.origin;
   }
   return "http://127.0.0.1:8000";
 }
