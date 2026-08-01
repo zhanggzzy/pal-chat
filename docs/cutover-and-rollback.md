@@ -10,6 +10,16 @@ This repository does **not** migrate legacy data forward and does **not**
 support reverse-compat replay into older layouts. The stage-7 cutover path is a
 fresh runtime root plus a documented rollback to the previous local root.
 
+## Validation status
+
+- POSIX bootstrap/start/health/stop was revalidated locally on `2026-08-01`
+  with `./scripts/validate-stage7.sh`.
+- The representative performance baseline was regenerated on `2026-08-01`
+  with `./scripts/run-stage7-perf.sh --runs 20 --ui-runs 8`; the hard gates are
+  `message_commit_non_model` P95 `< 50ms` and `messages_recent_1000` P95 `< 200ms`.
+- PowerShell entrypoints are shipped with the same environment contract, but
+  local execution evidence still requires a Windows host with `pwsh`.
+
 ## Recommended local cutover
 
 1. Stop any existing local runtime with `./scripts/stop.sh`.

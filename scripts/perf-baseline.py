@@ -305,11 +305,30 @@ def measure_post_commits(
     ws.connect()
     assert ws.sock is not None
     ws.sock.settimeout(5)
+    snapshot = ws.recv_json()
+    if snapshot.get("event_type") != "session.snapshot":
+        raise RuntimeError("expected websocket session snapshot before perf sampling")
+    warmup_client_message_id = "perf-measure-warmup"
+    warmup_response = submit_message(
+        client,
+        conversation_id,
+        client_message_id=warmup_client_message_id,
+        content_markdown="measured perf warmup",
+    )
+    warmup_response.raise_for_status()
+    while True:
+        warmup_event = ws.recv_json()
+        if warmup_event.get("event_type") != "message.committed":
+            continue
+        payload = warmup_event.get("payload") or {}
+        message = payload.get("message") or {}
+        if message.get("client_message_id") != warmup_client_message_id:
+            continue
+        break
+    wait_for_idle_barrier(client, conversation_id)
     for index in range(runs):
-        if index == 0:
-            snapshot = ws.recv_json()
-            if snapshot.get("event_type") != "session.snapshot":
-                raise RuntimeError("expected websocket session snapshot before perf sampling")
+        if index > 0:
+            wait_for_idle_barrier(client, conversation_id)
         client_message_id = f"perf-measure-{index}"
         started = time.perf_counter()
         response = submit_message(
@@ -325,7 +344,7 @@ def measure_post_commits(
         post_samples.append(
             {
                 "run": index + 1,
-                "kind": "cold" if index == 0 else "warm",
+                "kind": "warm",
                 "duration_ms": post_ms,
                 "client_message_id": client_message_id,
                 "trace_id": trace_id,
@@ -345,7 +364,7 @@ def measure_post_commits(
         ws_visible_samples.append(
             {
                 "run": index + 1,
-                "kind": "cold" if index == 0 else "warm",
+                "kind": "warm",
                 "duration_ms": (time.perf_counter() - visible_started) * 1000,
                 "client_message_id": client_message_id,
             }
@@ -362,6 +381,7 @@ def measure_post_commits(
             trace_payload = fetch_trace(client, trace_id)
             post_samples[-1]["trace"] = trace_payload
             ws_visible_samples[-1]["trace"] = trace_payload
+        wait_for_idle_barrier(client, conversation_id)
     ws.close()
     return post_samples, ws_visible_samples
 

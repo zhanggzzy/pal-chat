@@ -103,7 +103,11 @@ async function postMention(request: APIRequestContext, conversationId: string): 
 }
 
 async function selectConversation(page: Page, title: string): Promise<void> {
-  await page.getByRole("button", { name: new RegExp(title) }).click();
+  await page
+    .locator("section")
+    .filter({ has: page.getByRole("heading", { name: "实验列表" }) })
+    .getByRole("button", { name: new RegExp(title) })
+    .click();
 }
 
 async function tabTo(page: Page, target: Locator, maxSteps = 20): Promise<void> {
@@ -224,7 +228,9 @@ test("disconnect reconnects and clears transient typing state from REST authorit
       { timeout: 10_000 },
     )
     .toBeGreaterThan(1);
-  await expect(page.getByText("A playwright done")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("log").getByText("A playwright done")).toBeVisible({
+    timeout: 10_000,
+  });
   await page.getByRole("tab", { name: "A 私有视图" }).click();
   await expect(page.getByText("idle")).toBeVisible({ timeout: 10_000 });
 });
