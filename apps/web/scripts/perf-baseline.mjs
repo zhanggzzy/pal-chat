@@ -256,7 +256,9 @@ async function main() {
   const durations = [];
   const rawSamples = [];
   try {
-    await page.goto(options.baseUrl, { waitUntil: "networkidle" });
+    const url = new URL(options.baseUrl);
+    url.searchParams.set("pal_perf_trace", "1");
+    await page.goto(url.toString(), { waitUntil: "networkidle" });
     await page.getByRole("tablist", { name: "Inspector Tabs" }).waitFor({ state: "visible" });
     await selectConversation(page, client, options.secondaryTitle);
     for (let index = 0; index < options.runs; index += 1) {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import os
 import subprocess
 import sys
@@ -77,7 +78,7 @@ class InternalWorkerSocketManager:
         target_agent_id: str | None = None,
     ) -> None:
         def handle_delivery_result(
-            future: asyncio.Future[Any],
+            future: concurrent.futures.Future[None],
             *,
             current_conversation_id: str,
             current_agent_id: str,
@@ -95,7 +96,7 @@ class InternalWorkerSocketManager:
             future = asyncio.run_coroutine_threadsafe(websocket.send_json(event), loop)
             
             def callback(
-                done: asyncio.Future[Any],
+                done: concurrent.futures.Future[None],
                 *,
                 current_conversation_id: str = conversation_id,
                 current_agent_id: str = agent_id,

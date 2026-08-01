@@ -136,7 +136,7 @@ def _fetch_transcript_row(
     try:
         row = connection.execute(query, params).fetchone()
         assert row is not None
-        return row
+        return cast(sqlite3.Row, row)
     finally:
         connection.close()
 

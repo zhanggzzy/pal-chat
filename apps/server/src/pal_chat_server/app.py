@@ -185,18 +185,33 @@ def create_app() -> FastAPI:
     worker_supervisor = WorkerSupervisor(server_base_url=settings.server_base_url)
     outbox_dispatcher = OutboxDispatcher(session_factory=get_session_factory())
 
+    def catalog_ready_revision() -> str | None:
+        engine = get_engine(settings)
+        assert isinstance(engine, Engine)
+        try:
+            with engine.connect() as connection:
+                revision = connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one_or_none()
+                connection.exec_driver_sql("BEGIN IMMEDIATE")
+                connection.exec_driver_sql("ROLLBACK")
+        except OperationalError:
+            return None
+        return None if revision is None else str(revision)
+
     @asynccontextmanager
     async def lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
-        ensure_catalog_schema(settings)
-        outbox_dispatcher.start()
-        with get_session_factory()() as db:
-            ensure_default_template(db)
-            sync_catalog_from_manifests(db, settings)
-            conversations = list(
-                db.execute(
-                    select(ConversationRecord).where(ConversationRecord.archive_dir.is_not(None))
-                ).scalars()
-            )
+        conversations: list[ConversationRecord] = []
+        if catalog_ready_revision() == settings.ready_schema_revision:
+            outbox_dispatcher.start()
+            with get_session_factory()() as db:
+                ensure_default_template(db)
+                sync_catalog_from_manifests(db, settings)
+                conversations = list(
+                    db.execute(
+                        select(ConversationRecord).where(ConversationRecord.archive_dir.is_not(None))
+                    ).scalars()
+                )
         for conversation in conversations:
             if conversation.archive_dir is None:
                 continue
@@ -503,22 +518,14 @@ def create_app() -> FastAPI:
 
     @app.get("/health/ready", response_model=HealthResponse, tags=["health"])
     def ready_health() -> HealthResponse:
-        engine = get_engine(settings)
-        assert isinstance(engine, Engine)
-        try:
-            with engine.connect() as connection:
-                revision = connection.execute(
-                    text("SELECT version_num FROM alembic_version")
-                ).scalar_one_or_none()
-                connection.exec_driver_sql("BEGIN IMMEDIATE")
-                connection.exec_driver_sql("ROLLBACK")
-        except OperationalError as exc:
+        revision = catalog_ready_revision()
+        if revision is None:
             raise AppError(
                 code="schema_not_ready",
                 status_code=503,
                 message="Database schema is not ready.",
                 details={"expected": settings.ready_schema_revision, "actual": None},
-            ) from exc
+            )
         if revision != settings.ready_schema_revision:
             raise AppError(
                 code="schema_not_ready",
@@ -2048,8 +2055,19 @@ def create_app() -> FastAPI:
                 if request_run_id is None
                 else current_active_run_id in (None, request_run_id)
             )
+            terminal_worker_state = (
+                "PAUSED"
+                if run_status == "PAUSED"
+                else "LISTENING"
+                if run_status in terminal_statuses
+                else None
+            )
             next_worker_state = (
-                worker_state if should_apply_runtime_state else current_worker_state
+                terminal_worker_state
+                if should_apply_runtime_state and terminal_worker_state is not None
+                else worker_state
+                if should_apply_runtime_state
+                else current_worker_state
             )
             next_runtime_run_id = (
                 next_active_run_id if should_apply_runtime_state else current_active_run_id

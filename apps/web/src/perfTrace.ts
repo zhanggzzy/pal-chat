@@ -46,6 +46,21 @@ declare global {
   }
 }
 
+let cachedEnabled: boolean | null = null;
+
+export function isUiPerfTraceEnabled(): boolean {
+  if (cachedEnabled !== null) {
+    return cachedEnabled;
+  }
+  if (typeof window === "undefined") {
+    cachedEnabled = false;
+    return cachedEnabled;
+  }
+  const params = new URLSearchParams(window.location.search);
+  cachedEnabled = params.get("pal_perf_trace") === "1";
+  return cachedEnabled;
+}
+
 function nowMs(): number {
   return performance.timeOrigin + performance.now();
 }
@@ -60,7 +75,7 @@ function createStore(): PerfTraceStore {
 }
 
 function getStore(): PerfTraceStore | null {
-  if (typeof window === "undefined") {
+  if (typeof window === "undefined" || !isUiPerfTraceEnabled()) {
     return null;
   }
   window.__PAL_PERF_TRACE__ ??= createStore();
