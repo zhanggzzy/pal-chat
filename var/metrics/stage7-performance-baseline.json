@@ -1,0 +1,5100 @@
+{
+  "generated_at": "2026-08-01T03:13:08.181696+00:00",
+  "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+  "idle_barrier_before_sampling": {
+    "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+    "idle": true,
+    "workers_idle": true,
+    "running_runs": 0,
+    "pending_outbox": 0,
+    "dispatcher_pending": [],
+    "dispatcher_active": [],
+    "export_jobs_running": 0,
+    "authority": {
+      "latest_reliable_seq": 980,
+      "agents": {
+        "agent-a": {
+          "worker_state": "LISTENING",
+          "active_run_id": null,
+          "typing_status": "idle",
+          "typing_run_id": null,
+          "reliable_seq": 980,
+          "dirty_since_seq": null,
+          "updated_at": "2026-08-01 03:13:57"
+        },
+        "agent-b": {
+          "worker_state": "LISTENING",
+          "active_run_id": null,
+          "typing_status": "idle",
+          "typing_run_id": null,
+          "reliable_seq": 980,
+          "dirty_since_seq": null,
+          "updated_at": "2026-08-01 03:13:57"
+        }
+      }
+    }
+  },
+  "exit_samples": [
+    {
+      "name": "ui_sidebar_select_1440x900",
+      "threshold_ms": 100,
+      "avg_ms": 527.97,
+      "p95_ms": 3318.26,
+      "runs": 8,
+      "note": "Playwright headless; selects representative primary conversation from sidebar.",
+      "durations_ms": [
+        480.16,
+        319.81,
+        238.99,
+        311.91,
+        135.15,
+        217.34,
+        209.22,
+        2311.19
+      ],
+      "raw_samples": []
+    },
+    {
+      "name": "message_commit_non_model",
+      "threshold_ms": 50,
+      "avg_ms": 31.16,
+      "p95_ms": 41.26,
+      "runs": 20,
+      "note": "User message commit without mentions; no provider call should occur.",
+      "durations_ms": [
+        41.64,
+        31.95,
+        29.35,
+        31.57,
+        30.63,
+        33.47,
+        30.15,
+        29.12,
+        28.41,
+        29.88,
+        33.99,
+        29.53,
+        31.63,
+        31.82,
+        31.54,
+        29.37,
+        29.48,
+        29.33,
+        31.46,
+        28.96
+      ],
+      "raw_samples": [
+        {
+          "run": 1,
+          "kind": "warm",
+          "duration_ms": 41.64406203199178,
+          "client_message_id": "perf-measure-0",
+          "trace_id": "8246b88d-4fa6-4c08-bffa-b9064c8add3e",
+          "trace": {
+            "trace_id": "8246b88d-4fa6-4c08-bffa-b9064c8add3e",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 2.124
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 9.72
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 9.85
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 4.633,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 12.553
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 2.388,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.438,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0TR3ZV8VTN99M30DPBQP"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.406,
+                "event_id": "01KYXN0TR3ZV8VTN99M30DPBQP"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.02,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0TR33AEMTHV36Y76ZA4E"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.013,
+                "event_id": "01KYXN0TR33AEMTHV36Y76ZA4E"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.016,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0TR3DN00YFDWHM75KY77"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.39,
+                "event_id": "01KYXN0TR3DN00YFDWHM75KY77"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.712,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 12.45,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-0",
+              "message_id": "01KYXN0TR2Q9BE27K487GXC1C8"
+            },
+            "total_request_ms": 40.478,
+            "response_encode_ms": 1.598
+          }
+        },
+        {
+          "run": 2,
+          "kind": "warm",
+          "duration_ms": 31.946429051458836,
+          "client_message_id": "perf-measure-1",
+          "trace_id": "b05bedd6-f66b-4573-aa83-5a63f9ecdc93",
+          "trace": {
+            "trace_id": "b05bedd6-f66b-4573-aa83-5a63f9ecdc93",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.011
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.004
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.744
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.159,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.407
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.787,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.031,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0V7YKMEE0NNWWWDP2M5S"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.285,
+                "event_id": "01KYXN0V7YKMEE0NNWWWDP2M5S"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.201,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0V7Y0ZT8EYSSPCG6DJM0"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.125,
+                "event_id": "01KYXN0V7Y0ZT8EYSSPCG6DJM0"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.021,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0V7YNTATFX3FYQF3WAMH"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.62,
+                "event_id": "01KYXN0V7YNTATFX3FYQF3WAMH"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.157,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 11.378,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-1",
+              "message_id": "01KYXN0V7XXS5FHTAZMYF0ARP1"
+            },
+            "total_request_ms": 30.972,
+            "response_encode_ms": 7.647
+          }
+        },
+        {
+          "run": 3,
+          "kind": "warm",
+          "duration_ms": 29.35454493854195,
+          "client_message_id": "perf-measure-2",
+          "trace_id": "97bd63b2-e9eb-4ff8-8e0c-65113a4b420d",
+          "trace": {
+            "trace_id": "97bd63b2-e9eb-4ff8-8e0c-65113a4b420d",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.828
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.239
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.709
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.155,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.267
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.087,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.038,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0VKH8J91WED4R3889X15"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.155,
+                "event_id": "01KYXN0VKH8J91WED4R3889X15"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.033,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0VKH64FK70AJ61T9Y2ZT"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.151,
+                "event_id": "01KYXN0VKH64FK70AJ61T9Y2ZT"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.026,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0VKHD7HTVVQ5XKYZ2JCM"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.027,
+                "event_id": "01KYXN0VKHD7HTVVQ5XKYZ2JCM"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.307,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 8.563,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-2",
+              "message_id": "01KYXN0VKG60XCN5EV5S43PKFG"
+            },
+            "total_request_ms": 28.204,
+            "response_encode_ms": 5.006
+          }
+        },
+        {
+          "run": 4,
+          "kind": "warm",
+          "duration_ms": 31.566338962875307,
+          "client_message_id": "perf-measure-3",
+          "trace_id": "64533de1-8a37-40cd-a53d-320cfde9aaf6",
+          "trace": {
+            "trace_id": "64533de1-8a37-40cd-a53d-320cfde9aaf6",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.854
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.156
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.618
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.176,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 8.201
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.046,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.038,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0VYZCVF8W9YXHV068HR7"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.031,
+                "event_id": "01KYXN0VYZCVF8W9YXHV068HR7"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.019,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0VYZ9A1E91Z1QQC7RCBJ"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.013,
+                "event_id": "01KYXN0VYZ9A1E91Z1QQC7RCBJ"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.016,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0VYZ4N9SGXWKWT4412XF"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.125,
+                "event_id": "01KYXN0VYZ4N9SGXWKWT4412XF"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.12,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 9.369,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-3",
+              "message_id": "01KYXN0VYZZ28NF9WQATY8PXD0"
+            },
+            "total_request_ms": 30.665,
+            "response_encode_ms": 5.66
+          }
+        },
+        {
+          "run": 5,
+          "kind": "warm",
+          "duration_ms": 30.626418069005013,
+          "client_message_id": "perf-measure-4",
+          "trace_id": "8629bd7f-d9fd-42f9-b778-8b12bf357977",
+          "trace": {
+            "trace_id": "8629bd7f-d9fd-42f9-b778-8b12bf357977",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 2.042
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.022
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.598
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.14,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.29
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.113,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.03,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0WAKYY08ZX0NQ8TPPBR6"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.066,
+                "event_id": "01KYXN0WAKYY08ZX0NQ8TPPBR6"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.019,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0WAKNSKAMB39VNH4HEWW"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.038,
+                "event_id": "01KYXN0WAKNSKAMB39VNH4HEWW"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.017,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0WAKFE402BV8H8G6QYTR"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.642,
+                "event_id": "01KYXN0WAKFE402BV8H8G6QYTR"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.15,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 9.548,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-4",
+              "message_id": "01KYXN0WAKNG9GR74CP64GAM77"
+            },
+            "total_request_ms": 29.65,
+            "response_encode_ms": 5.558
+          }
+        },
+        {
+          "run": 6,
+          "kind": "warm",
+          "duration_ms": 33.46815297845751,
+          "client_message_id": "perf-measure-5",
+          "trace_id": "aeaccde2-f941-4194-8ec5-5fa47a9dca3f",
+          "trace": {
+            "trace_id": "aeaccde2-f941-4194-8ec5-5fa47a9dca3f",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.896
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.16
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.522
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.138,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.307
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 2.06,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.066,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0WNYSHK4V4K0H4NRM7J5"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.057,
+                "event_id": "01KYXN0WNYSHK4V4K0H4NRM7J5"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.025,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0WNYWA7QBYZ5555CTYQT"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.055,
+                "event_id": "01KYXN0WNYWA7QBYZ5555CTYQT"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.036,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0WNY5EWMKYM87FV9HZHR"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.034,
+                "event_id": "01KYXN0WNY5EWMKYM87FV9HZHR"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.15,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 10.585,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-5",
+              "message_id": "01KYXN0WNY5NG6P70VA9QH3GZ3"
+            },
+            "total_request_ms": 32.615,
+            "response_encode_ms": 9.592
+          }
+        },
+        {
+          "run": 7,
+          "kind": "warm",
+          "duration_ms": 30.153314000926912,
+          "client_message_id": "perf-measure-6",
+          "trace_id": "cb3ed7ca-ad3f-43ae-a17a-882d4d18a3c3",
+          "trace": {
+            "trace_id": "cb3ed7ca-ad3f-43ae-a17a-882d4d18a3c3",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.835
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.126
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.547
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.143,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 8.415
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.038,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.036,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0X1ENW5529BTYPX2B0DJ"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.161,
+                "event_id": "01KYXN0X1ENW5529BTYPX2B0DJ"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.022,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0X1EJTXXA2C198Y77EAJ"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.013,
+                "event_id": "01KYXN0X1EJTXXA2C198Y77EAJ"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.017,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0X1E7F2KYDZPWS9QTCE0"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.147,
+                "event_id": "01KYXN0X1E7F2KYDZPWS9QTCE0"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.115,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 8.155,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-6",
+              "message_id": "01KYXN0X1E615H4FTWKW5B5TCN"
+            },
+            "total_request_ms": 29.275,
+            "response_encode_ms": 5.209
+          }
+        },
+        {
+          "run": 8,
+          "kind": "warm",
+          "duration_ms": 29.12215795367956,
+          "client_message_id": "perf-measure-7",
+          "trace_id": "e2d56796-eb78-4c9d-aec7-2f10d44b4b63",
+          "trace": {
+            "trace_id": "e2d56796-eb78-4c9d-aec7-2f10d44b4b63",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.833
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.029
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.584
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.136,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.275
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.628,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.136,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0VE55XDC9ANNCPQ85ENT"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.308,
+                "event_id": "01KYXN0VE55XDC9ANNCPQ85ENT"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.146,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0VE5JNAMVSM0MYQ1R3N9"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.01,
+                "event_id": "01KYXN0VE5JNAMVSM0MYQ1R3N9"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.01,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0VE5ZEBEVFEM2M1PWT03"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.571,
+                "event_id": "01KYXN0VE5ZEBEVFEM2M1PWT03"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.153,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 11.841,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-7",
+              "message_id": "01KYXN0VE5FFFVV4MP4ECA28H0"
+            },
+            "total_request_ms": 28.188,
+            "response_encode_ms": 5.331
+          }
+        },
+        {
+          "run": 9,
+          "kind": "warm",
+          "duration_ms": 28.408930986188352,
+          "client_message_id": "perf-measure-8",
+          "trace_id": "0878f800-9e87-44ee-b1e3-d3ff5e16fb7b",
+          "trace": {
+            "trace_id": "0878f800-9e87-44ee-b1e3-d3ff5e16fb7b",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.841
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 6.987
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 6.534
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.134,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.43
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.179,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.039,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0VSQJSWJ8CPQQJ6TDBSN"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.097,
+                "event_id": "01KYXN0VSQJSWJ8CPQQJ6TDBSN"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.03,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0VSQ9ABBVEPA454AWVMR"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.11,
+                "event_id": "01KYXN0VSQ9ABBVEPA454AWVMR"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.019,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0VSQ6MCWWKQK7FEEQ4RZ"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.702,
+                "event_id": "01KYXN0VSQ6MCWWKQK7FEEQ4RZ"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.156,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 9.73,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-8",
+              "message_id": "01KYXN0VSQ0HA9DZP8NQ516NK9"
+            },
+            "total_request_ms": 27.288,
+            "response_encode_ms": 5.362
+          }
+        },
+        {
+          "run": 10,
+          "kind": "warm",
+          "duration_ms": 29.884244897402823,
+          "client_message_id": "perf-measure-9",
+          "trace_id": "f19bb4cd-8ddf-4b95-abfa-75025e59251e",
+          "trace": {
+            "trace_id": "f19bb4cd-8ddf-4b95-abfa-75025e59251e",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.91
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.178
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.538
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.153,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.399
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.073,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.042,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0W55ATBJBPAFFCYDX1RT"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.055,
+                "event_id": "01KYXN0W55ATBJBPAFFCYDX1RT"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.022,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0W55B182CX5638PR66FD"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.083,
+                "event_id": "01KYXN0W55B182CX5638PR66FD"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.018,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0W554CG5RRA5BHKHFBSP"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.29,
+                "event_id": "01KYXN0W554CG5RRA5BHKHFBSP"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.096,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 8.373,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-9",
+              "message_id": "01KYXN0W55SWXAH13VCSWMJ0Z0"
+            },
+            "total_request_ms": 28.816,
+            "response_encode_ms": 5.638
+          }
+        },
+        {
+          "run": 11,
+          "kind": "warm",
+          "duration_ms": 33.992398995906115,
+          "client_message_id": "perf-measure-10",
+          "trace_id": "858738e0-f04b-4e66-b074-c7a626283b99",
+          "trace": {
+            "trace_id": "858738e0-f04b-4e66-b074-c7a626283b99",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 2.779
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.211
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 3.349
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.145,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 13.691
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.009,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.035,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0WGN72GW45DACVKF557H"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.181,
+                "event_id": "01KYXN0WGN72GW45DACVKF557H"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.023,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0WGNDBX2D79N9XWHJTPS"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.011,
+                "event_id": "01KYXN0WGNDBX2D79N9XWHJTPS"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.02,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0WGNTBF1NVT8VQ7XX2K3"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.085,
+                "event_id": "01KYXN0WGNTBF1NVT8VQ7XX2K3"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.155,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 12.317,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-10",
+              "message_id": "01KYXN0WGNTV1E1T1BH4B9DYV5"
+            },
+            "total_request_ms": 32.989,
+            "response_encode_ms": 5.814
+          }
+        },
+        {
+          "run": 12,
+          "kind": "warm",
+          "duration_ms": 29.527297941967845,
+          "client_message_id": "perf-measure-11",
+          "trace_id": "8153c25f-2769-4dd1-953d-c91864829d36",
+          "trace": {
+            "trace_id": "8153c25f-2769-4dd1-953d-c91864829d36",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.899
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.044
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.615
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.156,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.24
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.132,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.041,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0WWFZKVBCBAN3E36YZ5G"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.146,
+                "event_id": "01KYXN0WWFZKVBCBAN3E36YZ5G"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.02,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0WWF0FVBSMCBPMJ8QBTC"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.014,
+                "event_id": "01KYXN0WWF0FVBSMCBPMJ8QBTC"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.016,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0WWFG0QEX50MXEEK2Q2A"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.02,
+                "event_id": "01KYXN0WWFG0QEX50MXEEK2Q2A"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.189,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 9.73,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-11",
+              "message_id": "01KYXN0WWFP16M69HCY40R68KH"
+            },
+            "total_request_ms": 28.502,
+            "response_encode_ms": 5.548
+          }
+        },
+        {
+          "run": 13,
+          "kind": "warm",
+          "duration_ms": 31.62658296059817,
+          "client_message_id": "perf-measure-12",
+          "trace_id": "b7f3f6ee-5690-4949-8a25-718a11637c98",
+          "trace": {
+            "trace_id": "b7f3f6ee-5690-4949-8a25-718a11637c98",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 2.0
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 6.928
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.537
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.143,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.459
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.237,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.06,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0X86BNR7HE4RRXXZPFZJ"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.154,
+                "event_id": "01KYXN0X86BNR7HE4RRXXZPFZJ"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.021,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0X86G7K92ZE41P5NBXXC"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.11,
+                "event_id": "01KYXN0X86G7K92ZE41P5NBXXC"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.018,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0X86VXA9PEAZPJ3WYFRZ"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.665,
+                "event_id": "01KYXN0X86VXA9PEAZPJ3WYFRZ"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.173,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 10.59,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-12",
+              "message_id": "01KYXN0X86Z3QTC7KC22S2SJR0"
+            },
+            "total_request_ms": 30.696,
+            "response_encode_ms": 6.629
+          }
+        },
+        {
+          "run": 14,
+          "kind": "warm",
+          "duration_ms": 31.820416916161776,
+          "client_message_id": "perf-measure-13",
+          "trace_id": "636f4c5f-bbf3-4b73-add5-4421adb58d4e",
+          "trace": {
+            "trace_id": "636f4c5f-bbf3-4b73-add5-4421adb58d4e",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.849
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 8.36
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.579
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.256,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 8.454
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.056,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.037,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0XKNM79528J3V7TFZJQ5"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.068,
+                "event_id": "01KYXN0XKNM79528J3V7TFZJQ5"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.021,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0XKNKNQN2GYPZ9YHFQHS"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.014,
+                "event_id": "01KYXN0XKNKNQN2GYPZ9YHFQHS"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.016,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0XKNSDVAWA2BZZ1P7GRP"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.075,
+                "event_id": "01KYXN0XKNSDVAWA2BZZ1P7GRP"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.172,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 8.392,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-13",
+              "message_id": "01KYXN0XKMDJH1T3XZB9QT77DH"
+            },
+            "total_request_ms": 30.828,
+            "response_encode_ms": 5.33
+          }
+        },
+        {
+          "run": 15,
+          "kind": "warm",
+          "duration_ms": 31.540998024865985,
+          "client_message_id": "perf-measure-14",
+          "trace_id": "59c0cc1b-6651-462a-a753-88903525c2e4",
+          "trace": {
+            "trace_id": "59c0cc1b-6651-462a-a753-88903525c2e4",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.881
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.122
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 8.842
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.19,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 8.175
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.207,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.038,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0XZAFWW2N4VJ8TPDNRF8"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.183,
+                "event_id": "01KYXN0XZAFWW2N4VJ8TPDNRF8"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.033,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0XZAX753X6MM57V89T39"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.109,
+                "event_id": "01KYXN0XZAX753X6MM57V89T39"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.03,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0XZASZ6K82ZEGMYC0X05"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.021,
+                "event_id": "01KYXN0XZASZ6K82ZEGMYC0X05"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.121,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 8.687,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-14",
+              "message_id": "01KYXN0XZAFP8FQXDT9Y3WSZ3V"
+            },
+            "total_request_ms": 30.639,
+            "response_encode_ms": 5.429
+          }
+        },
+        {
+          "run": 16,
+          "kind": "warm",
+          "duration_ms": 29.37250805553049,
+          "client_message_id": "perf-measure-15",
+          "trace_id": "93e407e6-98dc-401e-a565-b4553455f045",
+          "trace": {
+            "trace_id": "93e407e6-98dc-401e-a565-b4553455f045",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.846
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.205
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.643
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.134,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.205
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.059,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.033,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0YAT83G1E5HR2WH7QKB3"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.126,
+                "event_id": "01KYXN0YAT83G1E5HR2WH7QKB3"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.019,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0YAT7WV9ANY94657P5PJ"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.013,
+                "event_id": "01KYXN0YAT7WV9ANY94657P5PJ"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.016,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0YATFTQ7KY54F8EW27P1"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.104,
+                "event_id": "01KYXN0YATFTQ7KY54F8EW27P1"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.111,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 8.959,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-15",
+              "message_id": "01KYXN0YATP84CYG8XT54MJ0P7"
+            },
+            "total_request_ms": 28.475,
+            "response_encode_ms": 5.442
+          }
+        },
+        {
+          "run": 17,
+          "kind": "warm",
+          "duration_ms": 29.480753000825644,
+          "client_message_id": "perf-measure-16",
+          "trace_id": "7fdfb8c2-c459-49cc-8165-a53f0af00bf2",
+          "trace": {
+            "trace_id": "7fdfb8c2-c459-49cc-8165-a53f0af00bf2",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.659
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.13
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.792
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.175,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.192
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.177,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.029,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0YPDJK4WN8A9R0709ADM"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.127,
+                "event_id": "01KYXN0YPDJK4WN8A9R0709ADM"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.019,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0YPDPD8T8N7CYQD40PVJ"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.106,
+                "event_id": "01KYXN0YPDPD8T8N7CYQD40PVJ"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.017,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0YPDBWKT4Y19MEVWKN0C"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.184,
+                "event_id": "01KYXN0YPDBWKT4Y19MEVWKN0C"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.173,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 9.613,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-16",
+              "message_id": "01KYXN0YPD49ERGCZP95Q8GSKM"
+            },
+            "total_request_ms": 28.608,
+            "response_encode_ms": 4.66
+          }
+        },
+        {
+          "run": 18,
+          "kind": "warm",
+          "duration_ms": 29.33140704408288,
+          "client_message_id": "perf-measure-17",
+          "trace_id": "079f503f-af08-418e-a679-331626182754",
+          "trace": {
+            "trace_id": "079f503f-af08-418e-a679-331626182754",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.034
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.018
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.725
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.142,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.299
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.08,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.037,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0Z1QE94KB61SVYGZJHPJ"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.129,
+                "event_id": "01KYXN0Z1QE94KB61SVYGZJHPJ"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.02,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0Z1QT5CGAH5CVJ0ET4SG"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.005,
+                "event_id": "01KYXN0Z1QT5CGAH5CVJ0ET4SG"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.017,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0Z1Q1PN57EFAB7RMCZ8R"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.118,
+                "event_id": "01KYXN0Z1Q1PN57EFAB7RMCZ8R"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.144,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 8.147,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-17",
+              "message_id": "01KYXN0Z1QGH8P01Q8FK8X5M9K"
+            },
+            "total_request_ms": 28.403,
+            "response_encode_ms": 5.185
+          }
+        },
+        {
+          "run": 19,
+          "kind": "warm",
+          "duration_ms": 31.455549062229693,
+          "client_message_id": "perf-measure-18",
+          "trace_id": "fa356331-8dff-4646-8ff9-57ffed0019f5",
+          "trace": {
+            "trace_id": "fa356331-8dff-4646-8ff9-57ffed0019f5",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.753
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.05
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.617
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.148,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 8.42
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.074,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.038,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0ZDAP6KBJY6A75GDFNRS"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.106,
+                "event_id": "01KYXN0ZDAP6KBJY6A75GDFNRS"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.01,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0ZDAE5HNP1S3XEQ6AQF8"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.006,
+                "event_id": "01KYXN0ZDAE5HNP1S3XEQ6AQF8"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.017,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0ZDAWS0MXR10YGVQ1K4D"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.136,
+                "event_id": "01KYXN0ZDAWS0MXR10YGVQ1K4D"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.127,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 8.87,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-18",
+              "message_id": "01KYXN0ZD9N3T58ECB8A0ZVNP9"
+            },
+            "total_request_ms": 30.349,
+            "response_encode_ms": 5.361
+          }
+        },
+        {
+          "run": 20,
+          "kind": "warm",
+          "duration_ms": 28.959615039639175,
+          "client_message_id": "perf-measure-19",
+          "trace_id": "193ef9f9-5bf0-48fa-9871-672ffa26fd8f",
+          "trace": {
+            "trace_id": "193ef9f9-5bf0-48fa-9871-672ffa26fd8f",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.898
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.217
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.587
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.145,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.339
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.262,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.053,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0ZRQGNHYVSNDBQ7N1V94"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.751,
+                "event_id": "01KYXN0ZRQGNHYVSNDBQ7N1V94"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.235,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0ZRQVPMV86Z5JYCK1B1T"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.168,
+                "event_id": "01KYXN0ZRQVPMV86Z5JYCK1B1T"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.024,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0ZRQ2WG506J4ZZERM4WV"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.361,
+                "event_id": "01KYXN0ZRQ2WG506J4ZZERM4WV"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.352,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 11.698,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-19",
+              "message_id": "01KYXN0ZRQ57Y6B4JQKFZN225E"
+            },
+            "total_request_ms": 28.04,
+            "response_encode_ms": 4.854
+          }
+        }
+      ]
+    },
+    {
+      "name": "messages_recent_1000",
+      "threshold_ms": 200,
+      "avg_ms": 16.37,
+      "p95_ms": 48.6,
+      "runs": 20,
+      "note": "Reads the latest 1000 public messages from the representative conversation.",
+      "durations_ms": [
+        14.26,
+        14.27,
+        13.45,
+        35.19,
+        13.84,
+        13.49,
+        13.8,
+        12.67,
+        13.57,
+        13.21,
+        13.51,
+        14.12,
+        49.3,
+        13.61,
+        13.74,
+        12.6,
+        13.17,
+        13.2,
+        13.77,
+        12.54
+      ],
+      "raw_samples": [
+        {
+          "run": 1,
+          "kind": "cold",
+          "duration_ms": 14.258938026614487,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages?limit=1000",
+          "trace_id": "2401fcd8-57ea-4c54-a33a-a38c9edcf46b",
+          "trace": {
+            "trace_id": "2401fcd8-57ea-4c54-a33a-a38c9edcf46b",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.789
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 12.905,
+            "response_encode_ms": 12.116
+          }
+        },
+        {
+          "run": 2,
+          "kind": "warm",
+          "duration_ms": 14.266462065279484,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages?limit=1000",
+          "trace_id": "d5427cd8-cf0b-4722-b927-808eedf79534",
+          "trace": {
+            "trace_id": "d5427cd8-cf0b-4722-b927-808eedf79534",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.966
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 13.041,
+            "response_encode_ms": 12.075
+          }
+        },
+        {
+          "run": 3,
+          "kind": "warm",
+          "duration_ms": 13.451764010824263,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages?limit=1000",
+          "trace_id": "1624150b-e41c-4a74-a134-1e69164626f0",
+          "trace": {
+            "trace_id": "1624150b-e41c-4a74-a134-1e69164626f0",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.04
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 12.115,
+            "response_encode_ms": 11.075
+          }
+        },
+        {
+          "run": 4,
+          "kind": "warm",
+          "duration_ms": 35.18524800892919,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages?limit=1000",
+          "trace_id": "7842aec8-8e16-4d91-bf29-0615c70b53be",
+          "trace": {
+            "trace_id": "7842aec8-8e16-4d91-bf29-0615c70b53be",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.51
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 33.838,
+            "response_encode_ms": 32.328
+          }
+        },
+        {
+          "run": 5,
+          "kind": "warm",
+          "duration_ms": 13.841209001839161,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages?limit=1000",
+          "trace_id": "e5252643-f54a-48e3-89d3-cfbd8c320c30",
+          "trace": {
+            "trace_id": "e5252643-f54a-48e3-89d3-cfbd8c320c30",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.014
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 12.554,
+            "response_encode_ms": 11.54
+          }
+        },
+        {
+          "run": 6,
+          "kind": "warm",
+          "duration_ms": 13.49270693026483,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages?limit=1000",
+          "trace_id": "8a6f913f-885a-446f-b189-07377626ccd6",
+          "trace": {
+            "trace_id": "8a6f913f-885a-446f-b189-07377626ccd6",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.958
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 12.199,
+            "response_encode_ms": 11.241
+          }
+        },
+        {
+          "run": 7,
+          "kind": "warm",
+          "duration_ms": 13.79963697399944,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages?limit=1000",
+          "trace_id": "322cc06e-5d0e-4dbe-b0c0-aabc488498eb",
+          "trace": {
+            "trace_id": "322cc06e-5d0e-4dbe-b0c0-aabc488498eb",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.927
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 12.503,
+            "response_encode_ms": 11.576
+          }
+        },
+        {
+          "run": 8,
+          "kind": "warm",
+          "duration_ms": 12.673070072196424,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages?limit=1000",
+          "trace_id": "bb89e8fa-2506-4d84-af2f-cf5aa816025d",
+          "trace": {
+            "trace_id": "bb89e8fa-2506-4d84-af2f-cf5aa816025d",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.873
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 11.392,
+            "response_encode_ms": 10.519
+          }
+        },
+        {
+          "run": 9,
+          "kind": "warm",
+          "duration_ms": 13.56509793549776,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages?limit=1000",
+          "trace_id": "a09d7743-d586-4200-bb75-0059c2170bca",
+          "trace": {
+            "trace_id": "a09d7743-d586-4200-bb75-0059c2170bca",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.933
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 12.325,
+            "response_encode_ms": 11.392
+          }
+        },
+        {
+          "run": 10,
+          "kind": "warm",
+          "duration_ms": 13.207337004132569,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages?limit=1000",
+          "trace_id": "1ed05dde-92cc-4954-9b50-2f3487d2b5d6",
+          "trace": {
+            "trace_id": "1ed05dde-92cc-4954-9b50-2f3487d2b5d6",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.838
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 11.95,
+            "response_encode_ms": 11.112
+          }
+        },
+        {
+          "run": 11,
+          "kind": "warm",
+          "duration_ms": 13.508430100046098,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages?limit=1000",
+          "trace_id": "5c8c5515-4149-4485-9dd8-02a8c8aa26eb",
+          "trace": {
+            "trace_id": "5c8c5515-4149-4485-9dd8-02a8c8aa26eb",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.964
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 12.455,
+            "response_encode_ms": 11.491
+          }
+        },
+        {
+          "run": 12,
+          "kind": "warm",
+          "duration_ms": 14.123874949291348,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages?limit=1000",
+          "trace_id": "d4919021-f9f8-4ca1-94f7-b77d697999d6",
+          "trace": {
+            "trace_id": "d4919021-f9f8-4ca1-94f7-b77d697999d6",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.892
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 13.03,
+            "response_encode_ms": 12.138
+          }
+        },
+        {
+          "run": 13,
+          "kind": "warm",
+          "duration_ms": 49.30100298952311,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages?limit=1000",
+          "trace_id": "63bda926-3d00-4498-bcf4-c9fbec181769",
+          "trace": {
+            "trace_id": "63bda926-3d00-4498-bcf4-c9fbec181769",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.904
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 48.205,
+            "response_encode_ms": 47.301
+          }
+        },
+        {
+          "run": 14,
+          "kind": "warm",
+          "duration_ms": 13.607227010652423,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages?limit=1000",
+          "trace_id": "f64757ff-b92b-45bc-a002-cb2969d86041",
+          "trace": {
+            "trace_id": "f64757ff-b92b-45bc-a002-cb2969d86041",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.928
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 12.429,
+            "response_encode_ms": 11.501
+          }
+        },
+        {
+          "run": 15,
+          "kind": "warm",
+          "duration_ms": 13.739019981585443,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages?limit=1000",
+          "trace_id": "a90a2575-c168-4703-9cf2-f8038ce14fce",
+          "trace": {
+            "trace_id": "a90a2575-c168-4703-9cf2-f8038ce14fce",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.95
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 12.609,
+            "response_encode_ms": 11.659
+          }
+        },
+        {
+          "run": 16,
+          "kind": "warm",
+          "duration_ms": 12.600360088981688,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages?limit=1000",
+          "trace_id": "d471345a-c6ce-4d85-8469-ebf7ae5be20f",
+          "trace": {
+            "trace_id": "d471345a-c6ce-4d85-8469-ebf7ae5be20f",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.888
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 11.568,
+            "response_encode_ms": 10.68
+          }
+        },
+        {
+          "run": 17,
+          "kind": "warm",
+          "duration_ms": 13.174918945878744,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages?limit=1000",
+          "trace_id": "1a1ec087-dd16-4ebd-967b-80f322349d26",
+          "trace": {
+            "trace_id": "1a1ec087-dd16-4ebd-967b-80f322349d26",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.907
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 12.096,
+            "response_encode_ms": 11.189
+          }
+        },
+        {
+          "run": 18,
+          "kind": "warm",
+          "duration_ms": 13.198334956541657,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages?limit=1000",
+          "trace_id": "7917abb5-0482-4c9b-abcb-b7cc72d0034a",
+          "trace": {
+            "trace_id": "7917abb5-0482-4c9b-abcb-b7cc72d0034a",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.113
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 12.174,
+            "response_encode_ms": 11.061
+          }
+        },
+        {
+          "run": 19,
+          "kind": "warm",
+          "duration_ms": 13.769612996838987,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages?limit=1000",
+          "trace_id": "9ac419b3-f029-423b-88d8-7e9fb4f38cfb",
+          "trace": {
+            "trace_id": "9ac419b3-f029-423b-88d8-7e9fb4f38cfb",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.893
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 12.623,
+            "response_encode_ms": 11.73
+          }
+        },
+        {
+          "run": 20,
+          "kind": "warm",
+          "duration_ms": 12.536045047454536,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages?limit=1000",
+          "trace_id": "e0a9ec37-d6ee-4bae-801f-702e9f9c91fe",
+          "trace": {
+            "trace_id": "e0a9ec37-d6ee-4bae-801f-702e9f9c91fe",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.903
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 11.417,
+            "response_encode_ms": 10.514
+          }
+        }
+      ]
+    }
+  ],
+  "auxiliary_samples": [
+    {
+      "name": "ready_health",
+      "threshold_ms": 200,
+      "avg_ms": 1.16,
+      "p95_ms": 2.22,
+      "runs": 20,
+      "note": "Service health baseline under the seeded dataset.",
+      "durations_ms": [
+        1.18,
+        1.63,
+        1.07,
+        0.92,
+        0.99,
+        1.19,
+        1.12,
+        2.24,
+        1.09,
+        1.06,
+        1.03,
+        1.07,
+        0.88,
+        1.04,
+        0.96,
+        0.92,
+        1.02,
+        1.76,
+        0.93,
+        1.01
+      ],
+      "raw_samples": [
+        {
+          "run": 1,
+          "kind": "cold",
+          "duration_ms": 1.1771819554269314,
+          "path": "/health/ready",
+          "trace_id": "7b99193b-4d70-44a4-a0aa-a7693627b616",
+          "trace": {
+            "trace_id": "7b99193b-4d70-44a4-a0aa-a7693627b616",
+            "method": "GET",
+            "path": "/health/ready",
+            "sync_segments": [],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 0.546,
+            "response_encode_ms": 0.546
+          }
+        },
+        {
+          "run": 2,
+          "kind": "warm",
+          "duration_ms": 1.6260900301858783,
+          "path": "/health/ready",
+          "trace_id": "45246506-3c9a-4285-8758-b47d506211a7",
+          "trace": {
+            "trace_id": "45246506-3c9a-4285-8758-b47d506211a7",
+            "method": "GET",
+            "path": "/health/ready",
+            "sync_segments": [],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 0.55,
+            "response_encode_ms": 0.55
+          }
+        },
+        {
+          "run": 3,
+          "kind": "warm",
+          "duration_ms": 1.0716699762269855,
+          "path": "/health/ready",
+          "trace_id": "4a403d55-1533-42c7-989e-3765257a8e8e",
+          "trace": {
+            "trace_id": "4a403d55-1533-42c7-989e-3765257a8e8e",
+            "method": "GET",
+            "path": "/health/ready",
+            "sync_segments": [],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 0.5,
+            "response_encode_ms": 0.5
+          }
+        },
+        {
+          "run": 4,
+          "kind": "warm",
+          "duration_ms": 0.915521988645196,
+          "path": "/health/ready",
+          "trace_id": "1e55a71b-7cb4-4925-beae-3442a5fca86a",
+          "trace": {
+            "trace_id": "1e55a71b-7cb4-4925-beae-3442a5fca86a",
+            "method": "GET",
+            "path": "/health/ready",
+            "sync_segments": [],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 0.428,
+            "response_encode_ms": 0.428
+          }
+        },
+        {
+          "run": 5,
+          "kind": "warm",
+          "duration_ms": 0.989175052382052,
+          "path": "/health/ready",
+          "trace_id": "db6e85a2-014c-4de1-aa2c-e3c6e529b62b",
+          "trace": {
+            "trace_id": "db6e85a2-014c-4de1-aa2c-e3c6e529b62b",
+            "method": "GET",
+            "path": "/health/ready",
+            "sync_segments": [],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 0.418,
+            "response_encode_ms": 0.418
+          }
+        },
+        {
+          "run": 6,
+          "kind": "warm",
+          "duration_ms": 1.1910649482160807,
+          "path": "/health/ready",
+          "trace_id": "74dbe495-999a-428a-a6ef-201313d1cafc",
+          "trace": {
+            "trace_id": "74dbe495-999a-428a-a6ef-201313d1cafc",
+            "method": "GET",
+            "path": "/health/ready",
+            "sync_segments": [],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 0.561,
+            "response_encode_ms": 0.561
+          }
+        },
+        {
+          "run": 7,
+          "kind": "warm",
+          "duration_ms": 1.1174529790878296,
+          "path": "/health/ready",
+          "trace_id": "d0ce1c4e-2138-4207-bd0a-5e28c0a67eb2",
+          "trace": {
+            "trace_id": "d0ce1c4e-2138-4207-bd0a-5e28c0a67eb2",
+            "method": "GET",
+            "path": "/health/ready",
+            "sync_segments": [],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 0.541,
+            "response_encode_ms": 0.541
+          }
+        },
+        {
+          "run": 8,
+          "kind": "warm",
+          "duration_ms": 2.242894028313458,
+          "path": "/health/ready",
+          "trace_id": "0e214e1e-e646-4372-bc04-5d52fb97fbbb",
+          "trace": {
+            "trace_id": "0e214e1e-e646-4372-bc04-5d52fb97fbbb",
+            "method": "GET",
+            "path": "/health/ready",
+            "sync_segments": [],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 1.668,
+            "response_encode_ms": 1.668
+          }
+        },
+        {
+          "run": 9,
+          "kind": "warm",
+          "duration_ms": 1.0930290445685387,
+          "path": "/health/ready",
+          "trace_id": "1810ec0d-75a0-40d1-adb1-7f71694a8b9e",
+          "trace": {
+            "trace_id": "1810ec0d-75a0-40d1-adb1-7f71694a8b9e",
+            "method": "GET",
+            "path": "/health/ready",
+            "sync_segments": [],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 0.485,
+            "response_encode_ms": 0.485
+          }
+        },
+        {
+          "run": 10,
+          "kind": "warm",
+          "duration_ms": 1.0611730394884944,
+          "path": "/health/ready",
+          "trace_id": "5aba4030-52fc-4f1f-a34e-b7ad8d1f3c07",
+          "trace": {
+            "trace_id": "5aba4030-52fc-4f1f-a34e-b7ad8d1f3c07",
+            "method": "GET",
+            "path": "/health/ready",
+            "sync_segments": [],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 0.51,
+            "response_encode_ms": 0.51
+          }
+        },
+        {
+          "run": 11,
+          "kind": "warm",
+          "duration_ms": 1.031100982800126,
+          "path": "/health/ready",
+          "trace_id": "80f8d01b-9eb3-484b-9fb7-dcc757fe1c4c",
+          "trace": {
+            "trace_id": "80f8d01b-9eb3-484b-9fb7-dcc757fe1c4c",
+            "method": "GET",
+            "path": "/health/ready",
+            "sync_segments": [],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 0.45,
+            "response_encode_ms": 0.45
+          }
+        },
+        {
+          "run": 12,
+          "kind": "warm",
+          "duration_ms": 1.0697350371629,
+          "path": "/health/ready",
+          "trace_id": "4dd116cc-a9cf-444a-8b01-5a07d78fa30a",
+          "trace": {
+            "trace_id": "4dd116cc-a9cf-444a-8b01-5a07d78fa30a",
+            "method": "GET",
+            "path": "/health/ready",
+            "sync_segments": [],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 0.431,
+            "response_encode_ms": 0.431
+          }
+        },
+        {
+          "run": 13,
+          "kind": "warm",
+          "duration_ms": 0.883809057995677,
+          "path": "/health/ready",
+          "trace_id": "f9d2ae5c-eac8-4e5e-9621-9f2dcfdcfdc7",
+          "trace": {
+            "trace_id": "f9d2ae5c-eac8-4e5e-9621-9f2dcfdcfdc7",
+            "method": "GET",
+            "path": "/health/ready",
+            "sync_segments": [],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 0.389,
+            "response_encode_ms": 0.389
+          }
+        },
+        {
+          "run": 14,
+          "kind": "warm",
+          "duration_ms": 1.0363140609115362,
+          "path": "/health/ready",
+          "trace_id": "b21692c9-860d-4dcc-bad5-271c1c3d75ea",
+          "trace": {
+            "trace_id": "b21692c9-860d-4dcc-bad5-271c1c3d75ea",
+            "method": "GET",
+            "path": "/health/ready",
+            "sync_segments": [],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 0.442,
+            "response_encode_ms": 0.442
+          }
+        },
+        {
+          "run": 15,
+          "kind": "warm",
+          "duration_ms": 0.9560131002217531,
+          "path": "/health/ready",
+          "trace_id": "136051ae-3121-444d-8760-dbaab147ee2a",
+          "trace": {
+            "trace_id": "136051ae-3121-444d-8760-dbaab147ee2a",
+            "method": "GET",
+            "path": "/health/ready",
+            "sync_segments": [],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 0.449,
+            "response_encode_ms": 0.449
+          }
+        },
+        {
+          "run": 16,
+          "kind": "warm",
+          "duration_ms": 0.9212150471284986,
+          "path": "/health/ready",
+          "trace_id": "6bda69e8-7d8c-4f67-9afb-192ecff93368",
+          "trace": {
+            "trace_id": "6bda69e8-7d8c-4f67-9afb-192ecff93368",
+            "method": "GET",
+            "path": "/health/ready",
+            "sync_segments": [],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 0.388,
+            "response_encode_ms": 0.388
+          }
+        },
+        {
+          "run": 17,
+          "kind": "warm",
+          "duration_ms": 1.0150610469281673,
+          "path": "/health/ready",
+          "trace_id": "a61d8492-75f6-49c1-b5db-18ea3880730c",
+          "trace": {
+            "trace_id": "a61d8492-75f6-49c1-b5db-18ea3880730c",
+            "method": "GET",
+            "path": "/health/ready",
+            "sync_segments": [],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 0.474,
+            "response_encode_ms": 0.474
+          }
+        },
+        {
+          "run": 18,
+          "kind": "warm",
+          "duration_ms": 1.7621119040995836,
+          "path": "/health/ready",
+          "trace_id": "fc9f1493-3d20-4529-bad8-dc235438a27c",
+          "trace": {
+            "trace_id": "fc9f1493-3d20-4529-bad8-dc235438a27c",
+            "method": "GET",
+            "path": "/health/ready",
+            "sync_segments": [],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 1.033,
+            "response_encode_ms": 1.033
+          }
+        },
+        {
+          "run": 19,
+          "kind": "warm",
+          "duration_ms": 0.9345939615741372,
+          "path": "/health/ready",
+          "trace_id": "f3a3ab5f-751a-46ad-8125-172ceab3f2f8",
+          "trace": {
+            "trace_id": "f3a3ab5f-751a-46ad-8125-172ceab3f2f8",
+            "method": "GET",
+            "path": "/health/ready",
+            "sync_segments": [],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 0.439,
+            "response_encode_ms": 0.439
+          }
+        },
+        {
+          "run": 20,
+          "kind": "warm",
+          "duration_ms": 1.0123609099537134,
+          "path": "/health/ready",
+          "trace_id": "0781a28b-2bef-4c1f-afb9-e317088d2255",
+          "trace": {
+            "trace_id": "0781a28b-2bef-4c1f-afb9-e317088d2255",
+            "method": "GET",
+            "path": "/health/ready",
+            "sync_segments": [],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 0.443,
+            "response_encode_ms": 0.443
+          }
+        }
+      ]
+    },
+    {
+      "name": "cost_breakdown",
+      "threshold_ms": 200,
+      "avg_ms": 51.86,
+      "p95_ms": 70.54,
+      "runs": 20,
+      "note": "Auxiliary monitoring endpoint on the same representative conversation.",
+      "durations_ms": [
+        53.46,
+        50.32,
+        49.93,
+        50.88,
+        71.04,
+        61.04,
+        49.68,
+        49.15,
+        47.08,
+        49.35,
+        54.33,
+        50.27,
+        49.45,
+        49.44,
+        49.57,
+        50.24,
+        51.65,
+        51.45,
+        48.65,
+        50.26
+      ],
+      "raw_samples": [
+        {
+          "run": 1,
+          "kind": "cold",
+          "duration_ms": 53.45649505034089,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+          "trace_id": "5ce7caf2-110b-4767-ad0d-4b0cddad1dda",
+          "trace": {
+            "trace_id": "5ce7caf2-110b-4767-ad0d-4b0cddad1dda",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.93
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 52.59,
+            "response_encode_ms": 51.66
+          }
+        },
+        {
+          "run": 2,
+          "kind": "warm",
+          "duration_ms": 50.32261798623949,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+          "trace_id": "ad3118f7-c070-4e5e-b708-9e3c58dee534",
+          "trace": {
+            "trace_id": "ad3118f7-c070-4e5e-b708-9e3c58dee534",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.987
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 49.431,
+            "response_encode_ms": 48.444
+          }
+        },
+        {
+          "run": 3,
+          "kind": "warm",
+          "duration_ms": 49.93190604727715,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+          "trace_id": "2c488371-c3a8-4ca6-86ee-fc9f8217285b",
+          "trace": {
+            "trace_id": "2c488371-c3a8-4ca6-86ee-fc9f8217285b",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.939
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 49.133,
+            "response_encode_ms": 48.194
+          }
+        },
+        {
+          "run": 4,
+          "kind": "warm",
+          "duration_ms": 50.8769319858402,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+          "trace_id": "2af17dde-5d29-4a79-9583-1c22d0b5df53",
+          "trace": {
+            "trace_id": "2af17dde-5d29-4a79-9583-1c22d0b5df53",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.277
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 49.971,
+            "response_encode_ms": 48.694
+          }
+        },
+        {
+          "run": 5,
+          "kind": "warm",
+          "duration_ms": 71.04334095492959,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+          "trace_id": "b517a946-0216-478e-b2b2-7baac4f4e350",
+          "trace": {
+            "trace_id": "b517a946-0216-478e-b2b2-7baac4f4e350",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.037
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 70.228,
+            "response_encode_ms": 69.191
+          }
+        },
+        {
+          "run": 6,
+          "kind": "warm",
+          "duration_ms": 61.03897397406399,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+          "trace_id": "49fe9d08-ae2f-4f4d-94a8-2229ee149012",
+          "trace": {
+            "trace_id": "49fe9d08-ae2f-4f4d-94a8-2229ee149012",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.934
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 60.077,
+            "response_encode_ms": 59.143
+          }
+        },
+        {
+          "run": 7,
+          "kind": "warm",
+          "duration_ms": 49.6778569649905,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+          "trace_id": "f7b7c567-849e-4aa1-9779-d0e649f1686e",
+          "trace": {
+            "trace_id": "f7b7c567-849e-4aa1-9779-d0e649f1686e",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.03
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 48.773,
+            "response_encode_ms": 47.743
+          }
+        },
+        {
+          "run": 8,
+          "kind": "warm",
+          "duration_ms": 49.1467040264979,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+          "trace_id": "59ea65a9-01f8-496a-afd0-155308ad4064",
+          "trace": {
+            "trace_id": "59ea65a9-01f8-496a-afd0-155308ad4064",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.116
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 48.25,
+            "response_encode_ms": 47.134
+          }
+        },
+        {
+          "run": 9,
+          "kind": "warm",
+          "duration_ms": 47.0768139930442,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+          "trace_id": "15a52ed7-a07a-4c7d-af1b-8dfe20af090c",
+          "trace": {
+            "trace_id": "15a52ed7-a07a-4c7d-af1b-8dfe20af090c",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.989
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 46.261,
+            "response_encode_ms": 45.272
+          }
+        },
+        {
+          "run": 10,
+          "kind": "warm",
+          "duration_ms": 49.35484495945275,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+          "trace_id": "1c03f7d8-394d-4edf-aa85-64545b8b65e4",
+          "trace": {
+            "trace_id": "1c03f7d8-394d-4edf-aa85-64545b8b65e4",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.017
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 48.478,
+            "response_encode_ms": 47.461
+          }
+        },
+        {
+          "run": 11,
+          "kind": "warm",
+          "duration_ms": 54.333689040504396,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+          "trace_id": "ce0d6dfc-d918-4b83-b0c5-41d1b23b5e47",
+          "trace": {
+            "trace_id": "ce0d6dfc-d918-4b83-b0c5-41d1b23b5e47",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.003
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 53.291,
+            "response_encode_ms": 52.288
+          }
+        },
+        {
+          "run": 12,
+          "kind": "warm",
+          "duration_ms": 50.273836008273065,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+          "trace_id": "fbe48663-2015-4bb0-a559-fbf39571e5dd",
+          "trace": {
+            "trace_id": "fbe48663-2015-4bb0-a559-fbf39571e5dd",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.12
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 49.328,
+            "response_encode_ms": 48.208
+          }
+        },
+        {
+          "run": 13,
+          "kind": "warm",
+          "duration_ms": 49.45461801253259,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+          "trace_id": "963f3627-f020-4e34-a870-1df88555e8e1",
+          "trace": {
+            "trace_id": "963f3627-f020-4e34-a870-1df88555e8e1",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.926
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 48.599,
+            "response_encode_ms": 47.673
+          }
+        },
+        {
+          "run": 14,
+          "kind": "warm",
+          "duration_ms": 49.44361804518849,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+          "trace_id": "a41292f0-9082-4e71-b02a-cc6950f8a087",
+          "trace": {
+            "trace_id": "a41292f0-9082-4e71-b02a-cc6950f8a087",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.958
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 48.642,
+            "response_encode_ms": 47.684
+          }
+        },
+        {
+          "run": 15,
+          "kind": "warm",
+          "duration_ms": 49.57403498701751,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+          "trace_id": "0ad7025f-458e-4fe5-a406-215d18e04a6b",
+          "trace": {
+            "trace_id": "0ad7025f-458e-4fe5-a406-215d18e04a6b",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.931
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 48.623,
+            "response_encode_ms": 47.692
+          }
+        },
+        {
+          "run": 16,
+          "kind": "warm",
+          "duration_ms": 50.24260398931801,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+          "trace_id": "a5b2ea78-ba22-4f66-a502-25d5bf87ad36",
+          "trace": {
+            "trace_id": "a5b2ea78-ba22-4f66-a502-25d5bf87ad36",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.977
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 49.481,
+            "response_encode_ms": 48.504
+          }
+        },
+        {
+          "run": 17,
+          "kind": "warm",
+          "duration_ms": 51.65025603491813,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+          "trace_id": "bac87090-98c6-4a3e-9037-b9103b31785f",
+          "trace": {
+            "trace_id": "bac87090-98c6-4a3e-9037-b9103b31785f",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.028
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 50.85,
+            "response_encode_ms": 49.822
+          }
+        },
+        {
+          "run": 18,
+          "kind": "warm",
+          "duration_ms": 51.44760699477047,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+          "trace_id": "6c6c3f7f-5a6f-40e8-a706-0e1a1de26df3",
+          "trace": {
+            "trace_id": "6c6c3f7f-5a6f-40e8-a706-0e1a1de26df3",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.996
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 50.707,
+            "response_encode_ms": 49.711
+          }
+        },
+        {
+          "run": 19,
+          "kind": "warm",
+          "duration_ms": 48.65041095763445,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+          "trace_id": "fcfc02ee-8779-4c9d-8b14-2b474de7f778",
+          "trace": {
+            "trace_id": "fcfc02ee-8779-4c9d-8b14-2b474de7f778",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.918
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 47.87,
+            "response_encode_ms": 46.952
+          }
+        },
+        {
+          "run": 20,
+          "kind": "warm",
+          "duration_ms": 50.25881400797516,
+          "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+          "trace_id": "ffee0b14-f555-4c89-b4b4-4243034da869",
+          "trace": {
+            "trace_id": "ffee0b14-f555-4c89-b4b4-4243034da869",
+            "method": "GET",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/metrics/cost-breakdown",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.176
+              }
+            ],
+            "dispatcher_segments": [],
+            "metadata": {},
+            "total_request_ms": 49.35,
+            "response_encode_ms": 48.174
+          }
+        }
+      ]
+    },
+    {
+      "name": "message_commit_ws_visible",
+      "threshold_ms": 100,
+      "avg_ms": 3.61,
+      "p95_ms": 26.94,
+      "runs": 20,
+      "note": "Elapsed time from POST return to matching message.committed becoming visible on WS.",
+      "durations_ms": [
+        28.12,
+        0.39,
+        3.04,
+        1.52,
+        1.1,
+        0.12,
+        2.51,
+        3.4,
+        3.2,
+        3.61,
+        1.63,
+        3.19,
+        2.11,
+        2.95,
+        3.02,
+        2.46,
+        1.23,
+        2.35,
+        1.78,
+        4.42
+      ],
+      "raw_samples": [
+        {
+          "run": 1,
+          "kind": "warm",
+          "duration_ms": 28.122719028033316,
+          "client_message_id": "perf-measure-0",
+          "trace": {
+            "trace_id": "8246b88d-4fa6-4c08-bffa-b9064c8add3e",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 2.124
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 9.72
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 9.85
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 4.633,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 12.553
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 2.388,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.438,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0TR3ZV8VTN99M30DPBQP"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.406,
+                "event_id": "01KYXN0TR3ZV8VTN99M30DPBQP"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.02,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0TR33AEMTHV36Y76ZA4E"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.013,
+                "event_id": "01KYXN0TR33AEMTHV36Y76ZA4E"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.016,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0TR3DN00YFDWHM75KY77"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.39,
+                "event_id": "01KYXN0TR3DN00YFDWHM75KY77"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.712,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 12.45,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-0",
+              "message_id": "01KYXN0TR2Q9BE27K487GXC1C8"
+            },
+            "total_request_ms": 40.478,
+            "response_encode_ms": 1.598
+          }
+        },
+        {
+          "run": 2,
+          "kind": "warm",
+          "duration_ms": 0.3867410123348236,
+          "client_message_id": "perf-measure-1",
+          "trace": {
+            "trace_id": "b05bedd6-f66b-4573-aa83-5a63f9ecdc93",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.011
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.004
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.744
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.159,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.407
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.787,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.031,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0V7YKMEE0NNWWWDP2M5S"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.285,
+                "event_id": "01KYXN0V7YKMEE0NNWWWDP2M5S"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.201,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0V7Y0ZT8EYSSPCG6DJM0"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.125,
+                "event_id": "01KYXN0V7Y0ZT8EYSSPCG6DJM0"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.021,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0V7YNTATFX3FYQF3WAMH"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.62,
+                "event_id": "01KYXN0V7YNTATFX3FYQF3WAMH"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.157,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 11.378,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-1",
+              "message_id": "01KYXN0V7XXS5FHTAZMYF0ARP1"
+            },
+            "total_request_ms": 30.972,
+            "response_encode_ms": 7.647
+          }
+        },
+        {
+          "run": 3,
+          "kind": "warm",
+          "duration_ms": 3.04318405687809,
+          "client_message_id": "perf-measure-2",
+          "trace": {
+            "trace_id": "97bd63b2-e9eb-4ff8-8e0c-65113a4b420d",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.828
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.239
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.709
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.155,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.267
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.087,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.038,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0VKH8J91WED4R3889X15"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.155,
+                "event_id": "01KYXN0VKH8J91WED4R3889X15"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.033,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0VKH64FK70AJ61T9Y2ZT"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.151,
+                "event_id": "01KYXN0VKH64FK70AJ61T9Y2ZT"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.026,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0VKHD7HTVVQ5XKYZ2JCM"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.027,
+                "event_id": "01KYXN0VKHD7HTVVQ5XKYZ2JCM"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.307,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 8.563,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-2",
+              "message_id": "01KYXN0VKG60XCN5EV5S43PKFG"
+            },
+            "total_request_ms": 28.204,
+            "response_encode_ms": 5.006
+          }
+        },
+        {
+          "run": 4,
+          "kind": "warm",
+          "duration_ms": 1.5187399694696069,
+          "client_message_id": "perf-measure-3",
+          "trace": {
+            "trace_id": "64533de1-8a37-40cd-a53d-320cfde9aaf6",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.854
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.156
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.618
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.176,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 8.201
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.046,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.038,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0VYZCVF8W9YXHV068HR7"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.031,
+                "event_id": "01KYXN0VYZCVF8W9YXHV068HR7"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.019,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0VYZ9A1E91Z1QQC7RCBJ"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.013,
+                "event_id": "01KYXN0VYZ9A1E91Z1QQC7RCBJ"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.016,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0VYZ4N9SGXWKWT4412XF"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.125,
+                "event_id": "01KYXN0VYZ4N9SGXWKWT4412XF"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.12,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 9.369,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-3",
+              "message_id": "01KYXN0VYZZ28NF9WQATY8PXD0"
+            },
+            "total_request_ms": 30.665,
+            "response_encode_ms": 5.66
+          }
+        },
+        {
+          "run": 5,
+          "kind": "warm",
+          "duration_ms": 1.1012780014425516,
+          "client_message_id": "perf-measure-4",
+          "trace": {
+            "trace_id": "8629bd7f-d9fd-42f9-b778-8b12bf357977",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 2.042
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.022
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.598
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.14,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.29
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.113,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.03,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0WAKYY08ZX0NQ8TPPBR6"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.066,
+                "event_id": "01KYXN0WAKYY08ZX0NQ8TPPBR6"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.019,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0WAKNSKAMB39VNH4HEWW"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.038,
+                "event_id": "01KYXN0WAKNSKAMB39VNH4HEWW"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.017,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0WAKFE402BV8H8G6QYTR"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.642,
+                "event_id": "01KYXN0WAKFE402BV8H8G6QYTR"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.15,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 9.548,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-4",
+              "message_id": "01KYXN0WAKNG9GR74CP64GAM77"
+            },
+            "total_request_ms": 29.65,
+            "response_encode_ms": 5.558
+          }
+        },
+        {
+          "run": 6,
+          "kind": "warm",
+          "duration_ms": 0.12466404587030411,
+          "client_message_id": "perf-measure-5",
+          "trace": {
+            "trace_id": "aeaccde2-f941-4194-8ec5-5fa47a9dca3f",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.896
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.16
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.522
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.138,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.307
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 2.06,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.066,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0WNYSHK4V4K0H4NRM7J5"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.057,
+                "event_id": "01KYXN0WNYSHK4V4K0H4NRM7J5"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.025,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0WNYWA7QBYZ5555CTYQT"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.055,
+                "event_id": "01KYXN0WNYWA7QBYZ5555CTYQT"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.036,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0WNY5EWMKYM87FV9HZHR"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.034,
+                "event_id": "01KYXN0WNY5EWMKYM87FV9HZHR"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.15,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 10.585,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-5",
+              "message_id": "01KYXN0WNY5NG6P70VA9QH3GZ3"
+            },
+            "total_request_ms": 32.615,
+            "response_encode_ms": 9.592
+          }
+        },
+        {
+          "run": 7,
+          "kind": "warm",
+          "duration_ms": 2.5111440336331725,
+          "client_message_id": "perf-measure-6",
+          "trace": {
+            "trace_id": "cb3ed7ca-ad3f-43ae-a17a-882d4d18a3c3",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.835
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.126
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.547
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.143,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 8.415
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.038,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.036,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0X1ENW5529BTYPX2B0DJ"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.161,
+                "event_id": "01KYXN0X1ENW5529BTYPX2B0DJ"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.022,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0X1EJTXXA2C198Y77EAJ"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.013,
+                "event_id": "01KYXN0X1EJTXXA2C198Y77EAJ"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.017,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0X1E7F2KYDZPWS9QTCE0"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.147,
+                "event_id": "01KYXN0X1E7F2KYDZPWS9QTCE0"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.115,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 8.155,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-6",
+              "message_id": "01KYXN0X1E615H4FTWKW5B5TCN"
+            },
+            "total_request_ms": 29.275,
+            "response_encode_ms": 5.209
+          }
+        },
+        {
+          "run": 8,
+          "kind": "warm",
+          "duration_ms": 3.403564915060997,
+          "client_message_id": "perf-measure-7",
+          "trace": {
+            "trace_id": "e2d56796-eb78-4c9d-aec7-2f10d44b4b63",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.833
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.029
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.584
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.136,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.275
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.628,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.136,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0VE55XDC9ANNCPQ85ENT"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.308,
+                "event_id": "01KYXN0VE55XDC9ANNCPQ85ENT"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.146,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0VE5JNAMVSM0MYQ1R3N9"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.01,
+                "event_id": "01KYXN0VE5JNAMVSM0MYQ1R3N9"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.01,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0VE5ZEBEVFEM2M1PWT03"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.571,
+                "event_id": "01KYXN0VE5ZEBEVFEM2M1PWT03"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.153,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 11.841,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-7",
+              "message_id": "01KYXN0VE5FFFVV4MP4ECA28H0"
+            },
+            "total_request_ms": 28.188,
+            "response_encode_ms": 5.331
+          }
+        },
+        {
+          "run": 9,
+          "kind": "warm",
+          "duration_ms": 3.1966210808604956,
+          "client_message_id": "perf-measure-8",
+          "trace": {
+            "trace_id": "0878f800-9e87-44ee-b1e3-d3ff5e16fb7b",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.841
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 6.987
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 6.534
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.134,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.43
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.179,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.039,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0VSQJSWJ8CPQQJ6TDBSN"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.097,
+                "event_id": "01KYXN0VSQJSWJ8CPQQJ6TDBSN"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.03,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0VSQ9ABBVEPA454AWVMR"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.11,
+                "event_id": "01KYXN0VSQ9ABBVEPA454AWVMR"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.019,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0VSQ6MCWWKQK7FEEQ4RZ"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.702,
+                "event_id": "01KYXN0VSQ6MCWWKQK7FEEQ4RZ"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.156,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 9.73,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-8",
+              "message_id": "01KYXN0VSQ0HA9DZP8NQ516NK9"
+            },
+            "total_request_ms": 27.288,
+            "response_encode_ms": 5.362
+          }
+        },
+        {
+          "run": 10,
+          "kind": "warm",
+          "duration_ms": 3.610642976127565,
+          "client_message_id": "perf-measure-9",
+          "trace": {
+            "trace_id": "f19bb4cd-8ddf-4b95-abfa-75025e59251e",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.91
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.178
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.538
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.153,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.399
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.073,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.042,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0W55ATBJBPAFFCYDX1RT"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.055,
+                "event_id": "01KYXN0W55ATBJBPAFFCYDX1RT"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.022,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0W55B182CX5638PR66FD"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.083,
+                "event_id": "01KYXN0W55B182CX5638PR66FD"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.018,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0W554CG5RRA5BHKHFBSP"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.29,
+                "event_id": "01KYXN0W554CG5RRA5BHKHFBSP"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.096,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 8.373,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-9",
+              "message_id": "01KYXN0W55SWXAH13VCSWMJ0Z0"
+            },
+            "total_request_ms": 28.816,
+            "response_encode_ms": 5.638
+          }
+        },
+        {
+          "run": 11,
+          "kind": "warm",
+          "duration_ms": 1.625513075850904,
+          "client_message_id": "perf-measure-10",
+          "trace": {
+            "trace_id": "858738e0-f04b-4e66-b074-c7a626283b99",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 2.779
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.211
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 3.349
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.145,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 13.691
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.009,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.035,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0WGN72GW45DACVKF557H"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.181,
+                "event_id": "01KYXN0WGN72GW45DACVKF557H"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.023,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0WGNDBX2D79N9XWHJTPS"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.011,
+                "event_id": "01KYXN0WGNDBX2D79N9XWHJTPS"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.02,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0WGNTBF1NVT8VQ7XX2K3"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.085,
+                "event_id": "01KYXN0WGNTBF1NVT8VQ7XX2K3"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.155,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 12.317,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-10",
+              "message_id": "01KYXN0WGNTV1E1T1BH4B9DYV5"
+            },
+            "total_request_ms": 32.989,
+            "response_encode_ms": 5.814
+          }
+        },
+        {
+          "run": 12,
+          "kind": "warm",
+          "duration_ms": 3.1912310514599085,
+          "client_message_id": "perf-measure-11",
+          "trace": {
+            "trace_id": "8153c25f-2769-4dd1-953d-c91864829d36",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.899
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.044
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.615
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.156,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.24
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.132,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.041,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0WWFZKVBCBAN3E36YZ5G"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.146,
+                "event_id": "01KYXN0WWFZKVBCBAN3E36YZ5G"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.02,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0WWF0FVBSMCBPMJ8QBTC"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.014,
+                "event_id": "01KYXN0WWF0FVBSMCBPMJ8QBTC"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.016,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0WWFG0QEX50MXEEK2Q2A"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.02,
+                "event_id": "01KYXN0WWFG0QEX50MXEEK2Q2A"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.189,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 9.73,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-11",
+              "message_id": "01KYXN0WWFP16M69HCY40R68KH"
+            },
+            "total_request_ms": 28.502,
+            "response_encode_ms": 5.548
+          }
+        },
+        {
+          "run": 13,
+          "kind": "warm",
+          "duration_ms": 2.1117670694366097,
+          "client_message_id": "perf-measure-12",
+          "trace": {
+            "trace_id": "b7f3f6ee-5690-4949-8a25-718a11637c98",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 2.0
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 6.928
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.537
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.143,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.459
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.237,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.06,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0X86BNR7HE4RRXXZPFZJ"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.154,
+                "event_id": "01KYXN0X86BNR7HE4RRXXZPFZJ"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.021,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0X86G7K92ZE41P5NBXXC"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.11,
+                "event_id": "01KYXN0X86G7K92ZE41P5NBXXC"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.018,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0X86VXA9PEAZPJ3WYFRZ"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.665,
+                "event_id": "01KYXN0X86VXA9PEAZPJ3WYFRZ"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.173,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 10.59,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-12",
+              "message_id": "01KYXN0X86Z3QTC7KC22S2SJR0"
+            },
+            "total_request_ms": 30.696,
+            "response_encode_ms": 6.629
+          }
+        },
+        {
+          "run": 14,
+          "kind": "warm",
+          "duration_ms": 2.9465180123224854,
+          "client_message_id": "perf-measure-13",
+          "trace": {
+            "trace_id": "636f4c5f-bbf3-4b73-add5-4421adb58d4e",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.849
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 8.36
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.579
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.256,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 8.454
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.056,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.037,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0XKNM79528J3V7TFZJQ5"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.068,
+                "event_id": "01KYXN0XKNM79528J3V7TFZJQ5"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.021,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0XKNKNQN2GYPZ9YHFQHS"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.014,
+                "event_id": "01KYXN0XKNKNQN2GYPZ9YHFQHS"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.016,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0XKNSDVAWA2BZZ1P7GRP"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.075,
+                "event_id": "01KYXN0XKNSDVAWA2BZZ1P7GRP"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.172,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 8.392,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-13",
+              "message_id": "01KYXN0XKMDJH1T3XZB9QT77DH"
+            },
+            "total_request_ms": 30.828,
+            "response_encode_ms": 5.33
+          }
+        },
+        {
+          "run": 15,
+          "kind": "warm",
+          "duration_ms": 3.0210239347070456,
+          "client_message_id": "perf-measure-14",
+          "trace": {
+            "trace_id": "59c0cc1b-6651-462a-a753-88903525c2e4",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.881
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.122
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 8.842
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.19,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 8.175
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.207,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.038,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0XZAFWW2N4VJ8TPDNRF8"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.183,
+                "event_id": "01KYXN0XZAFWW2N4VJ8TPDNRF8"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.033,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0XZAX753X6MM57V89T39"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.109,
+                "event_id": "01KYXN0XZAX753X6MM57V89T39"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.03,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0XZASZ6K82ZEGMYC0X05"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.021,
+                "event_id": "01KYXN0XZASZ6K82ZEGMYC0X05"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.121,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 8.687,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-14",
+              "message_id": "01KYXN0XZAFP8FQXDT9Y3WSZ3V"
+            },
+            "total_request_ms": 30.639,
+            "response_encode_ms": 5.429
+          }
+        },
+        {
+          "run": 16,
+          "kind": "warm",
+          "duration_ms": 2.456831978634,
+          "client_message_id": "perf-measure-15",
+          "trace": {
+            "trace_id": "93e407e6-98dc-401e-a565-b4553455f045",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.846
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.205
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.643
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.134,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.205
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.059,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.033,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0YAT83G1E5HR2WH7QKB3"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.126,
+                "event_id": "01KYXN0YAT83G1E5HR2WH7QKB3"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.019,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0YAT7WV9ANY94657P5PJ"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.013,
+                "event_id": "01KYXN0YAT7WV9ANY94657P5PJ"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.016,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0YATFTQ7KY54F8EW27P1"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.104,
+                "event_id": "01KYXN0YATFTQ7KY54F8EW27P1"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.111,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 8.959,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-15",
+              "message_id": "01KYXN0YATP84CYG8XT54MJ0P7"
+            },
+            "total_request_ms": 28.475,
+            "response_encode_ms": 5.442
+          }
+        },
+        {
+          "run": 17,
+          "kind": "warm",
+          "duration_ms": 1.2337389634922147,
+          "client_message_id": "perf-measure-16",
+          "trace": {
+            "trace_id": "7fdfb8c2-c459-49cc-8165-a53f0af00bf2",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.659
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.13
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.792
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.175,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.192
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.177,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.029,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0YPDJK4WN8A9R0709ADM"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.127,
+                "event_id": "01KYXN0YPDJK4WN8A9R0709ADM"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.019,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0YPDPD8T8N7CYQD40PVJ"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.106,
+                "event_id": "01KYXN0YPDPD8T8N7CYQD40PVJ"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.017,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0YPDBWKT4Y19MEVWKN0C"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.184,
+                "event_id": "01KYXN0YPDBWKT4Y19MEVWKN0C"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.173,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 9.613,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-16",
+              "message_id": "01KYXN0YPD49ERGCZP95Q8GSKM"
+            },
+            "total_request_ms": 28.608,
+            "response_encode_ms": 4.66
+          }
+        },
+        {
+          "run": 18,
+          "kind": "warm",
+          "duration_ms": 2.3468059953302145,
+          "client_message_id": "perf-measure-17",
+          "trace": {
+            "trace_id": "079f503f-af08-418e-a679-331626182754",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.034
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.018
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.725
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.142,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.299
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.08,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.037,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0Z1QE94KB61SVYGZJHPJ"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.129,
+                "event_id": "01KYXN0Z1QE94KB61SVYGZJHPJ"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.02,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0Z1QT5CGAH5CVJ0ET4SG"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.005,
+                "event_id": "01KYXN0Z1QT5CGAH5CVJ0ET4SG"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.017,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0Z1Q1PN57EFAB7RMCZ8R"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.118,
+                "event_id": "01KYXN0Z1Q1PN57EFAB7RMCZ8R"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.144,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 8.147,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-17",
+              "message_id": "01KYXN0Z1QGH8P01Q8FK8X5M9K"
+            },
+            "total_request_ms": 28.403,
+            "response_encode_ms": 5.185
+          }
+        },
+        {
+          "run": 19,
+          "kind": "warm",
+          "duration_ms": 1.7775350715965033,
+          "client_message_id": "perf-measure-18",
+          "trace": {
+            "trace_id": "fa356331-8dff-4646-8ff9-57ffed0019f5",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 1.753
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.05
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.617
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.148,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 8.42
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.074,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.038,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0ZDAP6KBJY6A75GDFNRS"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.106,
+                "event_id": "01KYXN0ZDAP6KBJY6A75GDFNRS"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.01,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0ZDAE5HNP1S3XEQ6AQF8"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.006,
+                "event_id": "01KYXN0ZDAE5HNP1S3XEQ6AQF8"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.017,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0ZDAWS0MXR10YGVQ1K4D"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.136,
+                "event_id": "01KYXN0ZDAWS0MXR10YGVQ1K4D"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.127,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 8.87,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-18",
+              "message_id": "01KYXN0ZD9N3T58ECB8A0ZVNP9"
+            },
+            "total_request_ms": 30.349,
+            "response_encode_ms": 5.361
+          }
+        },
+        {
+          "run": 20,
+          "kind": "warm",
+          "duration_ms": 4.420415963977575,
+          "client_message_id": "perf-measure-19",
+          "trace": {
+            "trace_id": "193ef9f9-5bf0-48fa-9871-672ffa26fd8f",
+            "method": "POST",
+            "path": "/api/v1/conversations/01KYXMZANDEZE2PT7NV85T8R9H/messages",
+            "sync_segments": [
+              {
+                "name": "catalog.bootstrap",
+                "duration_ms": 0.898
+              },
+              {
+                "name": "message.prepare_tx",
+                "duration_ms": 7.217
+              },
+              {
+                "name": "message.projection",
+                "duration_ms": 7.587
+              },
+              {
+                "name": "message.outbox_enqueue",
+                "duration_ms": 0.145,
+                "enqueued_events": 3
+              },
+              {
+                "name": "message.final_tx",
+                "duration_ms": 7.339
+              }
+            ],
+            "dispatcher_segments": [
+              {
+                "name": "dispatcher.select_pending",
+                "duration_ms": 1.262,
+                "pending_events": 3
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.053,
+                "event_type": "submission.status_changed",
+                "event_id": "01KYXN0ZRQGNHYVSNDBQ7N1V94"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.751,
+                "event_id": "01KYXN0ZRQGNHYVSNDBQ7N1V94"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.235,
+                "event_type": "message.committed",
+                "event_id": "01KYXN0ZRQVPMV86Z5JYCK1B1T"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.168,
+                "event_id": "01KYXN0ZRQVPMV86Z5JYCK1B1T"
+              },
+              {
+                "name": "dispatcher.publish_event",
+                "duration_ms": 0.024,
+                "event_type": "cp.revision_committed",
+                "event_id": "01KYXN0ZRQ2WG506J4ZZERM4WV"
+              },
+              {
+                "name": "dispatcher.mark_dispatched",
+                "duration_ms": 0.361,
+                "event_id": "01KYXN0ZRQ2WG506J4ZZERM4WV"
+              },
+              {
+                "name": "dispatcher.append_observations",
+                "duration_ms": 0.352,
+                "observations": 3
+              },
+              {
+                "name": "dispatcher.completed",
+                "duration_ms": 11.698,
+                "emitted_events": 3
+              }
+            ],
+            "metadata": {
+              "conversation_id": "01KYXMZANDEZE2PT7NV85T8R9H",
+              "client_message_id": "perf-measure-19",
+              "message_id": "01KYXN0ZRQ57Y6B4JQKFZN225E"
+            },
+            "total_request_ms": 28.04,
+            "response_encode_ms": 4.854
+          }
+        }
+      ]
+    }
+  ]
+}

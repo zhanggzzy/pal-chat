@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "pal-chat-server"
+    app_version: str = "0.2.0"
     env: str = "development"
     cors_origins: list[str] = ["http://127.0.0.1:5173", "http://localhost:5173"]
     data_dir: Path = Field(default_factory=default_data_dir)
@@ -28,16 +29,22 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("PAL_CHAT_DATABASE_URL", "database_url"),
     )
-    model_provider: str = "fake"
-    model_api_key: str | None = None
-    ready_schema_revision: str = "20260728_0001"
+    ready_schema_revision: str = "20260729_0001"
+    bind_host: str = "127.0.0.1"
+    keyring_service_name: str = "pal-chat"
+    credential_backend: str = "keyring"
+    server_base_url: str | None = None
 
     @property
     def resolved_database_url(self) -> str:
         if self.database_url:
             return self.database_url
-        db_path = self.data_dir / "pal-chat.db"
+        db_path = self.data_dir / "catalog.sqlite"
         return f"sqlite:///{db_path}"
+
+    @property
+    def experiments_dir(self) -> Path:
+        return self.data_dir / "experiments"
 
 
 @lru_cache
