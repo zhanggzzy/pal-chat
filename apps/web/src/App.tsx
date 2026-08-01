@@ -10,6 +10,7 @@ import {
   requestJson,
   saveManualScore,
 } from "./api";
+import { beginUiInteraction, markInteractionPainted } from "./perfTrace";
 import { applySocketPayload, emptyRuntimeViewState, inferRunForMessage, upsertMessage } from "./state";
 import "./styles.css";
 import type {
@@ -168,6 +169,10 @@ export function App(): JSX.Element {
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const runtimeStateRef = useRef(runtimeState);
+  const pendingSidebarInteractionRef = useRef<{
+    interactionId: string;
+    conversationId: string;
+  } | null>(null);
 
   const selectedRun = useMemo(
     () => runs.find((item) => item.run_id === selectedRunId) ?? null,
@@ -239,6 +244,24 @@ export function App(): JSX.Element {
     const payload = await loadWorkbench(apiBase, conversationId);
     applyWorkbenchPayload(payload);
     setStatusText("已同步");
+  }
+
+  function handleConversationSelect(conversationId: string, title: string): void {
+    if (conversationId === selectedConversationId) {
+      return;
+    }
+    const interactionId = beginUiInteraction("sidebar_select", {
+      conversation_id: conversationId,
+      title,
+    });
+    pendingSidebarInteractionRef.current =
+      interactionId === null
+        ? null
+        : {
+            interactionId,
+            conversationId,
+          };
+    setSelectedConversationId(conversationId);
   }
 
   useEffect(() => {
@@ -349,6 +372,27 @@ export function App(): JSX.Element {
       setErrorText(error instanceof Error ? error.message : "同步失败");
     });
   }, [apiBase, selectedConversationId]);
+
+  useEffect(() => {
+    const pendingInteraction = pendingSidebarInteractionRef.current;
+    if (!pendingInteraction) {
+      return;
+    }
+    if (!conversation || conversation.id !== pendingInteraction.conversationId) {
+      return;
+    }
+    let cancelled = false;
+    void markInteractionPainted(pendingInteraction.interactionId, "sidebar_conversation_painted").then(
+      () => {
+        if (!cancelled && pendingSidebarInteractionRef.current?.interactionId === pendingInteraction.interactionId) {
+          pendingSidebarInteractionRef.current = null;
+        }
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [conversation, messages]);
 
   useEffect(() => {
     if (!selectedHistoryId) {
@@ -624,7 +668,7 @@ export function App(): JSX.Element {
                   key={item.id}
                   type="button"
                   className={item.id === selectedConversationId ? "conversation-item active" : "conversation-item"}
-                  onClick={() => setSelectedConversationId(item.id)}
+                  onClick={() => handleConversationSelect(item.id, item.title)}
                 >
                   <strong>{item.title}</strong>
                   <span>{item.status}</span>

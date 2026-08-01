@@ -16,12 +16,15 @@ import type {
   RuntimeAuthority,
   RunAttempt,
 } from "./types";
+import { recordWorkbenchRequestEnd, recordWorkbenchRequestStart } from "./perfTrace";
 
 export async function requestJson<T>(
   apiBase: string,
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
+  const shouldTraceWorkbench = path.includes("/workbench");
+  const requestId = shouldTraceWorkbench ? recordWorkbenchRequestStart(path) : null;
   const response = await fetch(`${apiBase.replace(/\/$/, "")}${path}`, {
     headers: {
       "Content-Type": "application/json",
@@ -29,6 +32,9 @@ export async function requestJson<T>(
     },
     ...options,
   });
+  if (shouldTraceWorkbench) {
+    recordWorkbenchRequestEnd(requestId, response.status);
+  }
   const text = await response.text();
   const data = text ? (JSON.parse(text) as unknown) : null;
   if (!response.ok) {

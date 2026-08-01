@@ -41,35 +41,238 @@ function p95(values) {
   return sorted[rank];
 }
 
-async function selectConversation(page, title) {
+function metricMap(metrics) {
+  return Object.fromEntries(metrics.map((entry) => [entry.name, entry.value]));
+}
+
+function round(value) {
+  return Number(value.toFixed(2));
+}
+
+function extractCommitEnvelope(commits) {
+  if (!commits.length) {
+    return {
+      firstStartMs: null,
+      lastCommitMs: null,
+      actualDurationMs: 0,
+      windowMs: 0,
+    };
+  }
+  const firstStartMs = Math.min(...commits.map((commit) => commit.start_time_ms));
+  const lastCommitMs = Math.max(...commits.map((commit) => commit.commit_time_ms));
+  const actualDurationMs = commits.reduce((total, commit) => total + commit.actual_duration_ms, 0);
+  return {
+    firstStartMs,
+    lastCommitMs,
+    actualDurationMs,
+    windowMs: Math.max(0, lastCommitMs - firstStartMs),
+  };
+}
+
+function extractRequestEnvelope(requests) {
+  if (!requests.length) {
+    return {
+      firstStartMs: null,
+      lastEndMs: null,
+      durationMs: 0,
+    };
+  }
+  const started = Math.min(...requests.map((request) => request.started_at_ms));
+  const completed = Math.max(
+    ...requests.map((request) => request.completed_at_ms ?? request.started_at_ms),
+  );
+  return {
+    firstStartMs: started,
+    lastEndMs: completed,
+    durationMs: Math.max(0, completed - started),
+  };
+}
+
+function buildTimeline(trace) {
+  const request = extractRequestEnvelope(trace.requests);
+  const commits = extractCommitEnvelope(trace.commits);
+  const paintedAtMs = trace.painted_at_ms ?? trace.finished_at_ms ?? trace.started_at_ms;
+  const preRequestGapMs =
+    request.firstStartMs === null ? 0 : Math.max(0, request.firstStartMs - trace.started_at_ms);
+  const responseToCommitGapMs =
+    request.lastEndMs === null || commits.firstStartMs === null
+      ? 0
+      : Math.max(0, commits.firstStartMs - request.lastEndMs);
+  const commitToPaintGapMs =
+    commits.lastCommitMs === null ? 0 : Math.max(0, paintedAtMs - commits.lastCommitMs);
+  const accountedMs =
+    preRequestGapMs +
+    request.durationMs +
+    responseToCommitGapMs +
+    commits.windowMs +
+    commitToPaintGapMs;
+  return {
+    pre_request_gap_ms: round(preRequestGapMs),
+    request_ms: round(request.durationMs),
+    response_to_commit_gap_ms: round(responseToCommitGapMs),
+    react_commit_window_ms: round(commits.windowMs),
+    react_commit_actual_ms: round(commits.actualDurationMs),
+    commit_to_painted_gap_ms: round(commitToPaintGapMs),
+    scheduler_gap_ms: round(Math.max(0, paintedAtMs - trace.started_at_ms - accountedMs)),
+  };
+}
+
+async function readCdpMetrics(client) {
+  const response = await client.send("Performance.getMetrics");
+  return metricMap(response.metrics ?? []);
+}
+
+function browserMetricDelta(before, after) {
+  const toMilliseconds = (name) => round(((after[name] ?? 0) - (before[name] ?? 0)) * 1000);
+  const toCount = (name) => (after[name] ?? 0) - (before[name] ?? 0);
+  return {
+    layout_duration_ms: toMilliseconds("LayoutDuration"),
+    recalc_style_duration_ms: toMilliseconds("RecalcStyleDuration"),
+    script_duration_ms: toMilliseconds("ScriptDuration"),
+    task_duration_ms: toMilliseconds("TaskDuration"),
+    layout_count: toCount("LayoutCount"),
+    recalc_style_count: toCount("RecalcStyleCount"),
+  };
+}
+
+async function installBrowserPerfHooks(page) {
+  await page.addInitScript(() => {
+    window.__PAL_BROWSER_PERF__ = {
+      current: null,
+      completed: [],
+      start(interactionId) {
+        this.current = { interactionId, longtasks: [], startedAtMs: performance.now(), endedAtMs: null };
+      },
+      finish() {
+        if (!this.current) {
+          return;
+        }
+        this.current.endedAtMs = performance.now();
+        this.completed.push(structuredClone(this.current));
+        this.current = null;
+      },
+      consume() {
+        const completed = structuredClone(this.completed);
+        this.completed = [];
+        return completed;
+      },
+      reset() {
+        this.current = null;
+        this.completed = [];
+      },
+    };
+    const supported = PerformanceObserver.supportedEntryTypes ?? [];
+    if (supported.includes("longtask")) {
+      const observer = new PerformanceObserver((entries) => {
+        const perf = window.__PAL_BROWSER_PERF__;
+        if (!perf?.current) {
+          return;
+        }
+        for (const entry of entries.getEntries()) {
+          perf.current.longtasks.push({
+            name: entry.name,
+            start_time_ms: entry.startTime,
+            duration_ms: entry.duration,
+          });
+        }
+      });
+      observer.observe({ type: "longtask", buffered: true });
+    }
+  });
+}
+
+async function drainCompletedUiTrace(page, timeoutMs = 5000) {
+  await page.waitForFunction(() => (window.__PAL_PERF_TRACE__?.completed?.length ?? 0) > 0, null, {
+    timeout: timeoutMs,
+  });
+  const completed = await page.evaluate(() => {
+    const store = window.__PAL_PERF_TRACE__;
+    const traces = structuredClone(store?.completed ?? []);
+    if (store) {
+      store.completed = [];
+    }
+    return traces;
+  });
+  return completed.at(-1) ?? null;
+}
+
+async function selectConversation(page, client, title) {
   const button = page.getByRole("button", { name: new RegExp(title) }).first();
-  const started = performance.now();
+  await page.evaluate(() => {
+    if (window.__PAL_PERF_TRACE__) {
+      window.__PAL_PERF_TRACE__.completed = [];
+    }
+    window.__PAL_BROWSER_PERF__?.reset();
+  });
+  const beforeMetrics = await readCdpMetrics(client);
+  const wallStarted = performance.now();
   await button.click();
+  const trace = await drainCompletedUiTrace(page);
+  if (!trace) {
+    throw new Error(`Missing completed UI perf trace for ${title}`);
+  }
+  await page.evaluate(() => {
+    window.__PAL_BROWSER_PERF__?.finish();
+  });
   await page.getByRole("heading", { name: title }).waitFor({ state: "visible" });
   await page.getByRole("log").waitFor({ state: "visible" });
-  return performance.now() - started;
+  const afterMetrics = await readCdpMetrics(client);
+  const browserPerf = await page.evaluate(() => window.__PAL_BROWSER_PERF__?.consume?.() ?? []);
+  const totalDurationMs = performance.now() - wallStarted;
+  const timeline = buildTimeline(trace);
+  const longtasks = browserPerf.at(-1)?.longtasks ?? [];
+  const longtaskTotalMs = longtasks.reduce((total, entry) => total + entry.duration_ms, 0);
+  const browserMetrics = browserMetricDelta(beforeMetrics, afterMetrics);
+  return {
+    duration_ms: round(totalDurationMs),
+    trace,
+    browser_metrics: {
+      ...browserMetrics,
+      longtask_total_ms: round(longtaskTotalMs),
+      longtask_count: longtasks.length,
+      painted_barrier_ms: round(
+        Math.max(
+          0,
+          (trace.painted_at_ms ?? trace.finished_at_ms ?? trace.started_at_ms) - trace.started_at_ms,
+        ),
+      ),
+    },
+    longtasks: longtasks.map((entry) => ({
+      name: entry.name,
+      start_time_ms: round(entry.start_time_ms),
+      duration_ms: round(entry.duration_ms),
+    })),
+    timeline,
+  };
 }
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const client = await page.context().newCDPSession(page);
+  await client.send("Performance.enable");
+  await installBrowserPerfHooks(page);
   const durations = [];
   const rawSamples = [];
   try {
     await page.goto(options.baseUrl, { waitUntil: "networkidle" });
     await page.getByRole("tablist", { name: "Inspector Tabs" }).waitFor({ state: "visible" });
-    await selectConversation(page, options.secondaryTitle);
+    await selectConversation(page, client, options.secondaryTitle);
     for (let index = 0; index < options.runs; index += 1) {
-      const duration = await selectConversation(page, options.primaryTitle);
-      durations.push(duration);
-       rawSamples.push({
+      const sample = await selectConversation(page, client, options.primaryTitle);
+      durations.push(sample.duration_ms);
+      rawSamples.push({
         run: index + 1,
         kind: index === 0 ? "cold" : "warm",
-        duration_ms: Number(duration.toFixed(2)),
+        duration_ms: sample.duration_ms,
         target_title: options.primaryTitle,
+        timeline: sample.timeline,
+        browser_metrics: sample.browser_metrics,
+        longtasks: sample.longtasks,
+        trace: sample.trace,
       });
-      await selectConversation(page, options.secondaryTitle);
+      await selectConversation(page, client, options.secondaryTitle);
     }
   } finally {
     await browser.close();
@@ -80,10 +283,10 @@ async function main() {
       {
         sample: "ui_sidebar_select",
         runs: durations.length,
-        durations_ms: durations.map((value) => Number(value.toFixed(2))),
+        durations_ms: durations.map((value) => round(value)),
         raw_samples: rawSamples,
-        avg_ms: Number(average.toFixed(2)),
-        p95_ms: Number(p95(durations).toFixed(2)),
+        avg_ms: round(average),
+        p95_ms: round(p95(durations)),
         viewport: "1440x900",
         threshold_ms: 100,
       },
