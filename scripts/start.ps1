@@ -37,7 +37,7 @@ $env:PAL_CHAT_SERVER_BASE_URL = "http://127.0.0.1:$ApiPort"
 
 $api = Start-Process -FilePath "uv" -ArgumentList @("run","uvicorn","pal_chat_server.main:app","--app-dir","apps/server/src","--host","127.0.0.1","--port",$ApiPort) -WorkingDirectory $RootDir -RedirectStandardOutput $ApiLog -RedirectStandardError $ApiErrLog -PassThru
 $webEnv = "VITE_API_BASE=http://127.0.0.1:$ApiPort"
-$web = Start-Process -FilePath "npm" -ArgumentList @("--prefix","apps/web","run","dev","--","--host","127.0.0.1","--port",$WebPort,"--strictPort") -WorkingDirectory $RootDir -RedirectStandardOutput $WebLog -RedirectStandardError $WebErrLog -PassThru -Environment @{ "VITE_API_BASE" = "http://127.0.0.1:$ApiPort" }
+$web = Start-Process -FilePath "npm.cmd" -ArgumentList @("--prefix","apps/web","run","dev","--","--host","127.0.0.1","--port",$WebPort,"--strictPort") -WorkingDirectory $RootDir -RedirectStandardOutput $WebLog -RedirectStandardError $WebErrLog -PassThru -Environment @{ "VITE_API_BASE" = "http://127.0.0.1:$ApiPort" }
 
 Set-Content -Path (Join-Path $RuntimeDir "api.pid") -Value $api.Id
 Set-Content -Path (Join-Path $RuntimeDir "web.pid") -Value $web.Id
