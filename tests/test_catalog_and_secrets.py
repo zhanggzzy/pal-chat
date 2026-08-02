@@ -4,10 +4,13 @@ import json
 from pathlib import Path
 
 import conftest as test_support
+import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 from pal_chat_server.app import create_app
+from pal_chat_server.config import Settings
+from pal_chat_server.credential_store import FileSecretStore, secret_store_from_settings
 from pal_chat_server.db import catalog_path, reset_db_state
 
 
@@ -120,3 +123,25 @@ def test_catalog_rebuild_from_manifest(data_dir: Path) -> None:
         assert items[0]["status"] == "ended"
 
     test_support.clear_test_env()
+
+
+def test_keyring_backend_falls_back_to_file_store(
+    data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pal_chat_server import credential_store
+
+    monkeypatch.setattr(credential_store, "_keyring_backend_available", lambda _: False)
+    settings = Settings(data_dir=data_dir, credential_backend="keyring")
+
+    store = secret_store_from_settings(settings)
+    assert isinstance(store, credential_store.KeyringSecretStore)
+    assert isinstance(store.fallback_store, FileSecretStore)
+
+    store.set_secret("cred_demo", "super-secret-value")
+
+    reloaded_store = secret_store_from_settings(settings)
+    assert reloaded_store.get_secret("cred_demo") == "super-secret-value"
+
+    reloaded_store.delete_secret("cred_demo")
+    assert secret_store_from_settings(settings).get_secret("cred_demo") is None
