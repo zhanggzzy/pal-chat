@@ -1,3 +1,96 @@
+export interface ValidationIssue {
+  code: string;
+  message: string;
+  path: string;
+}
+
+export interface ValidationResult {
+  ok: boolean;
+  issues: ValidationIssue[];
+}
+
+export interface CredentialRead {
+  credential_ref: string;
+  provider: string;
+  label: string;
+  masked_value: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  validated_at: string | null;
+}
+
+export interface ModuleSelection {
+  module_id: string;
+  config: Record<string, unknown>;
+}
+
+export interface ModelBinding {
+  provider: string;
+  model: string;
+  credential_ref?: string | null;
+  options?: Record<string, unknown>;
+}
+
+export interface AgentProfile {
+  agent_id: string;
+  display_name: string;
+  persona_prompt: string;
+  attention_prior: string;
+  response_threshold: number;
+  model: ModelBinding;
+}
+
+export interface ExperimentProfile {
+  schema_version?: number;
+  template_id: string;
+  title: string;
+  prompt_version: string;
+  modules: Record<string, ModuleSelection>;
+  agent_a: AgentProfile;
+  agent_b: AgentProfile;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ProfileTemplateRead {
+  id: string;
+  slug: string;
+  title: string;
+  description: string;
+  profile: ExperimentProfile;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TransitionRule {
+  from_status: string;
+  to_status: string;
+  via: string;
+}
+
+export interface BootstrapResponse {
+  app_name: string;
+  app_version: string;
+  generated_at: string;
+  bind_host: string;
+  module_registry: Array<Record<string, unknown>>;
+  templates: ProfileTemplateRead[];
+  credentials: CredentialRead[];
+  state_transitions: TransitionRule[];
+  frontend: Record<string, string>;
+  note?: string | null;
+}
+
+export interface RuntimeGuardrails {
+  max_llm_calls: number;
+  max_total_tokens: number;
+  max_auto_retries: number;
+  worker_restart_limit: number;
+  pause: boolean;
+  stop: boolean;
+  log_level: string;
+}
+
 export interface ConversationRead {
   id: string;
   title: string;
@@ -6,9 +99,14 @@ export interface ConversationRead {
   locked_profile: ExperimentProfile | null;
   profile_hash: string | null;
   guardrails: RuntimeGuardrails;
+  catalog_metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  validated_at: string | null;
+  started_at: string | null;
   ended_at: string | null;
+  archive_dir: string | null;
+  manifest_path: string | null;
 }
 
 export interface RuntimeAuthorityAgentState {
@@ -26,47 +124,11 @@ export interface RuntimeAuthority {
   agents: Record<string, RuntimeAuthorityAgentState>;
 }
 
-export interface BootstrapResponse {
-  app_name: string;
-  app_version: string;
-  generated_at: string;
-  bind_host: string;
-  note?: string | null;
-}
-
-export interface RuntimeGuardrails {
-  max_llm_calls: number;
-  max_total_tokens: number;
-  max_auto_retries: number;
-  worker_restart_limit: number;
-  pause: boolean;
-  stop: boolean;
-  log_level: string;
-}
-
-export interface ModuleSelection {
-  module_id: string;
-  config: Record<string, unknown>;
-}
-
-export interface AgentProfile {
-  agent_id: string;
-  display_name: string;
-  persona_prompt: string;
-  attention_prior: string;
-  response_threshold: number;
-  model: {
-    provider: string;
-    model: string;
-  };
-}
-
-export interface ExperimentProfile {
-  title: string;
-  prompt_version: string;
-  modules: Record<string, ModuleSelection>;
-  agent_a: AgentProfile;
-  agent_b: AgentProfile;
+export interface ConversationDetail {
+  conversation: ConversationRead;
+  validation: ValidationResult;
+  manifest: Record<string, unknown> | null;
+  runtime_authority: RuntimeAuthority | null;
 }
 
 export interface Message {

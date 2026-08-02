@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page, type Route } from "@playwright/test";
 
 const apiBase = "http://127.0.0.1:18000";
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
@@ -23,7 +23,7 @@ async function cloneDefaultProfile(request: APIRequestContext): Promise<Record<s
   return payload.profile;
 }
 
-async function createConversation(
+async function createRuntimeConversation(
   request: APIRequestContext,
   title: string,
   script: ScriptStep[],
@@ -55,9 +55,7 @@ async function createConversation(
 async function endRunningConversations(request: APIRequestContext): Promise<void> {
   const response = await request.get(`${apiBase}/api/v1/conversations`);
   expect(response.ok()).toBeTruthy();
-  const payload = (await response.json()) as {
-    items: Array<{ id: string; status: string }>;
-  };
+  const payload = (await response.json()) as { items: Array<{ id: string; status: string }> };
   for (const item of payload.items) {
     if (item.status === "running") {
       expect((await request.post(`${apiBase}/api/v1/conversations/${item.id}/end`)).ok()).toBeTruthy();
@@ -65,8 +63,23 @@ async function endRunningConversations(request: APIRequestContext): Promise<void
   }
 }
 
-async function endConversation(request: APIRequestContext, conversationId: string): Promise<void> {
-  expect((await request.post(`${apiBase}/api/v1/conversations/${conversationId}/end`)).ok()).toBeTruthy();
+async function findConversationIdByTitle(request: APIRequestContext, title: string): Promise<string> {
+  await expect
+    .poll(
+      async () => {
+        const response = await request.get(`${apiBase}/api/v1/conversations`);
+        const payload = (await response.json()) as { items: Array<{ id: string; title: string }> };
+        return payload.items.find((item) => item.title === title)?.id ?? null;
+      },
+      { timeout: 10_000 },
+    )
+    .not.toBeNull();
+
+  const response = await request.get(`${apiBase}/api/v1/conversations`);
+  const payload = (await response.json()) as { items: Array<{ id: string; title: string }> };
+  const item = payload.items.find((entry) => entry.title === title);
+  expect(item).toBeDefined();
+  return item!.id;
 }
 
 async function markHistoryAsUnknownAdapter(conversationId: string): Promise<void> {
@@ -89,35 +102,8 @@ async function markHistoryAsUnknownAdapter(conversationId: string): Promise<void
   await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
 }
 
-async function postMention(request: APIRequestContext, conversationId: string): Promise<void> {
-  const response = await request.post(`${apiBase}/api/v1/conversations/${conversationId}/messages`, {
-    data: {
-      client_message_id: `playwright-${Date.now()}`,
-      content_markdown: "@A 请开始响应",
-      mentions: ["agent-a"],
-      responds_to: [],
-      primary_reply_to: null,
-    },
-  });
-  expect(response.ok()).toBeTruthy();
-}
-
 async function selectConversation(page: Page, title: string): Promise<void> {
-  await page
-    .locator("section")
-    .filter({ has: page.getByRole("heading", { name: "实验列表" }) })
-    .getByRole("button", { name: new RegExp(title) })
-    .click();
-}
-
-async function tabTo(page: Page, target: Locator, maxSteps = 20): Promise<void> {
-  for (let step = 0; step < maxSteps; step += 1) {
-    await page.keyboard.press("Tab");
-    if (await target.evaluate((node) => node === document.activeElement)) {
-      return;
-    }
-  }
-  throw new Error("target never received keyboard focus");
+  await page.getByRole("button", { name: new RegExp(title) }).first().click();
 }
 
 async function installSocketTracker(page: Page): Promise<void> {
@@ -141,40 +127,156 @@ async function installSocketTracker(page: Page): Promise<void> {
   });
 }
 
-test("desktop workbench supports review mode, raw fallback and keyboard navigation", async ({
+async function dragSeparator(
+  page: Page,
+  label: "主分隔线" | "次分隔线",
+  delta: { x?: number; y?: number },
+): Promise<void> {
+  const separator = page.getByRole("separator", { name: label });
+  const before = await separator.getAttribute("aria-valuenow");
+  const box = await separator.boundingBox();
+  expect(box).not.toBeNull();
+
+  await separator.dispatchEvent("pointerdown", {
+    pointerId: 1,
+    pointerType: "mouse",
+    clientX: box!.x + box!.width / 2,
+    clientY: box!.y + box!.height / 2,
+    buttons: 1,
+  });
+  await page.evaluate(
+    ({ x, y }) => {
+      window.dispatchEvent(
+        new PointerEvent("pointermove", {
+          pointerId: 1,
+          pointerType: "mouse",
+          clientX: x,
+          clientY: y,
+          buttons: 1,
+        }),
+      );
+      window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, pointerType: "mouse" }));
+    },
+    {
+      x: box!.x + box!.width / 2 + (delta.x ?? 0),
+      y: box!.y + box!.height / 2 + (delta.y ?? 0),
+    },
+  );
+
+  await expect(separator).not.toHaveAttribute("aria-valuenow", before ?? "");
+}
+
+async function failFirstMessageAfterCommit(route: Route): Promise<void> {
+  const response = await route.fetch();
+  await route.fulfill({
+    status: 500,
+    contentType: "application/json",
+    body: JSON.stringify({
+      error: { code: "forced_failure", message: "forced failure", retryable: true, details: {} },
+      request_id: "playwright-forced-failure",
+    }),
+  });
+  await response.dispose();
+}
+
+test("frontend-only flow covers draft, validate, start, mentions, retry, pause/resume, end and history", async ({
   page,
   request,
 }) => {
+  test.setTimeout(60_000);
   await endRunningConversations(request);
-  const runningTitle = `Playwright Live ${Date.now()}`;
-  const historyTitle = `Playwright History ${Date.now()}`;
-  const historyConversationId = await createConversation(request, historyTitle, []);
-  await endConversation(request, historyConversationId);
-  await markHistoryAsUnknownAdapter(historyConversationId);
-  await createConversation(request, runningTitle, []);
+  const title = `Playwright UI ${Date.now()}`;
 
   await page.goto("/");
-  await selectConversation(page, runningTitle);
+  await expect(page.getByRole("heading", { name: "群聊实验台" })).toBeVisible();
+  await expect(page.getByText("还没有凭据。若仅做验收，可继续使用 Scripted Adapter。")).toBeVisible();
+  await expect(page.getByRole("separator", { name: "主分隔线" })).toBeVisible();
+  await expect(page.getByRole("separator", { name: "次分隔线" })).toBeVisible();
 
-  expect(page.viewportSize()).toEqual({ width: 1440, height: 900 });
-  await expect(page.getByRole("tablist", { name: "Inspector Tabs" })).toBeVisible();
-  await expect(page.getByRole("log")).toBeVisible();
+  await dragSeparator(page, "主分隔线", { x: 120 });
+  await dragSeparator(page, "次分隔线", { y: 80 });
 
-  const agentATab = page.getByRole("tab", { name: "A 私有视图" });
-  await tabTo(page, agentATab);
-  await agentATab.press("Enter");
-  await expect(agentATab).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByText(/Raw Memory JSON|Graph Memory/)).toBeVisible();
+  await page.getByLabel("Draft Title").fill(title);
+  await page.getByRole("button", { name: "打开 9 步向导" }).click();
+  const wizardDialog = page.getByRole("dialog", { name: "新建实验向导" });
+  await expect(wizardDialog).toBeVisible();
+  await expect(wizardDialog.getByRole("heading", { name: "1. 模板与策略包" })).toBeVisible();
+  await expect(
+    wizardDialog.getByRole("button", { name: /9\. 配置 Diff 与启动确认/ }),
+  ).toBeVisible();
+  await page.getByLabel("Wizard Draft Title").fill(title);
+  await page.getByRole("button", { name: "下一步" }).click();
+  await page.getByLabel("Wizard Agent A Name").fill("Agent Alpha");
+  await page.getByLabel("Wizard Agent B Name").fill("Agent Beta");
+  for (let index = 0; index < 7; index += 1) {
+    await page.getByRole("button", { name: "下一步" }).click();
+  }
+  await expect(wizardDialog.getByRole("heading", { name: "配置 Diff", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "创建草稿并校验" }).click();
 
-  const memoryRevision = page.getByRole("button", { name: /mem-0/ });
-  await tabTo(page, memoryRevision);
-  await page.keyboard.press("Enter");
-  await expect(page.getByRole("alert")).toContainText("回看模式");
-  await expect(page.getByLabel("Public Message")).toBeDisabled();
+  await expect(page.locator(".chat-pane").getByRole("heading", { name: title })).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByLabel("Agent Alpha Display Name")).toBeDisabled();
+  await expect(page.getByText("校验通过，可以开始实验")).toBeVisible({ timeout: 10_000 });
 
-  await page.getByRole("button", { name: new RegExp(`${historyTitle}.*raw fallback`) }).click();
-  await page.getByRole("tab", { name: "Server 公共视图" }).click();
-  await expect(page.getByRole("heading", { name: "历史档案 / Raw Fallback" })).toBeVisible();
+  await page.getByRole("button", { name: "校验配置" }).click();
+  await expect(page.getByText("校验通过，可以开始实验")).toBeVisible({ timeout: 10_000 });
+
+  await page.getByRole("button", { name: "开始实验" }).click();
+  await expect(page.getByLabel("Agent Alpha Display Name")).toBeDisabled({ timeout: 10_000 });
+
+  const composer = page.getByLabel("Public Message");
+  await composer.fill("@");
+  await expect(page.getByRole("listbox", { name: "Mention Suggestions" })).toBeVisible();
+  await composer.press("Enter");
+  await expect(composer).toHaveValue("@all ");
+  await composer.type("请两位一起回答");
+  await composer.press("Enter");
+  await expect(page.getByText("请两位一起回答")).toBeVisible();
+  await expect(page.getByText("ACK").first()).toBeVisible({ timeout: 10_000 });
+
+  let forced = false;
+  await page.route(`${apiBase}/api/v1/conversations/*/messages`, async (route) => {
+    if (forced) {
+      await route.continue();
+      return;
+    }
+    forced = true;
+    await failFirstMessageAfterCommit(route);
+  });
+
+  await page
+    .locator("article")
+    .filter({ hasText: "请两位一起回答" })
+    .getByRole("button", { name: "引用" })
+    .click();
+  await composer.fill("补充一句");
+  await composer.press("Enter");
+  await expect(page.getByText("重试")).toBeVisible({ timeout: 10_000 });
+  await page.getByRole("button", { name: "重试" }).click();
+  await expect(page.getByText("补充一句")).toBeVisible();
+  await expect(page.getByText("回复消息")).toBeVisible({ timeout: 10_000 });
+
+  await page.getByRole("button", { name: "暂停" }).click();
+  await expect(page.locator(".status-strip").getByText(/^paused · seq \d+$/i)).toBeVisible({ timeout: 10_000 });
+  await page.getByRole("button", { name: "恢复" }).click();
+  await expect(page.locator(".status-strip").getByText(/^running · seq \d+$/i)).toBeVisible({ timeout: 10_000 });
+
+  await page.getByLabel("clarity score").fill("4");
+  await page.getByRole("button", { name: "保存人工评分" }).click();
+  await page.getByRole("button", { name: "生成分析 ZIP" }).click();
+  await expect(page.getByText("ready")).toBeVisible({ timeout: 10_000 });
+
+  await page.getByRole("button", { name: "结束" }).click();
+  await expect(page.locator(".status-strip").getByText(/^ended · seq \d+$/i)).toBeVisible({ timeout: 10_000 });
+
+  const conversationId = await findConversationIdByTitle(request, title);
+  await markHistoryAsUnknownAdapter(conversationId);
+  await page.reload();
+  await page.getByRole("button", { name: new RegExp(title) }).last().click();
+  await expect(page.getByText("raw fallback")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("历史档案 / Raw Fallback")).toBeVisible();
 });
 
 test("disconnect reconnects and clears transient typing state from REST authority", async ({
@@ -183,7 +285,7 @@ test("disconnect reconnects and clears transient typing state from REST authorit
 }) => {
   await endRunningConversations(request);
   const runningTitle = `Playwright Reconnect ${Date.now()}`;
-  const conversationId = await createConversation(request, runningTitle, [
+  const conversationId = await createRuntimeConversation(request, runningTitle, [
     {
       purpose: "decision",
       agent_id: "agent-a",
@@ -207,9 +309,10 @@ test("disconnect reconnects and clears transient typing state from REST authorit
   await installSocketTracker(page);
   await page.goto("/");
   await selectConversation(page, runningTitle);
-  await page.getByRole("tab", { name: "A 私有视图" }).click();
 
-  await postMention(request, conversationId);
+  const composer = page.getByLabel("Public Message");
+  await composer.fill("@A 请开始响应");
+  await composer.press("Enter");
   await page.waitForTimeout(300);
 
   await page.evaluate(() => {
@@ -221,16 +324,21 @@ test("disconnect reconnects and clears transient typing state from REST authorit
     .poll(
       async () =>
         page.evaluate(
-          () =>
-            ((window as typeof window & { __palChatSockets?: WebSocket[] }).__palChatSockets ?? [])
-              .length,
+          () => ((window as typeof window & { __palChatSockets?: WebSocket[] }).__palChatSockets ?? []).length,
         ),
       { timeout: 10_000 },
     )
     .toBeGreaterThan(1);
-  await expect(page.getByRole("log").getByText("A playwright done")).toBeVisible({
-    timeout: 10_000,
-  });
-  await page.getByRole("tab", { name: "A 私有视图" }).click();
-  await expect(page.getByText("idle")).toBeVisible({ timeout: 10_000 });
+
+  await expect(page.getByText("A playwright done")).toBeVisible({ timeout: 10_000 });
+  await expect(
+    page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: "Agent A" }) })
+      .getByText("idle")
+      .first(),
+  ).toBeVisible({ timeout: 10_000 });
+
+  const response = await request.get(`${apiBase}/api/v1/conversations/${conversationId}`);
+  expect(response.ok()).toBeTruthy();
 });
