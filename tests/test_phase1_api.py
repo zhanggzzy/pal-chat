@@ -25,7 +25,7 @@ def test_bootstrap_returns_registry_and_default_template(migrated_app: TestClien
     assert payload["app_name"] == "pal-chat-server"
     assert payload["templates"][0]["id"] == "default-natural-chat-v1"
     assert any(item["module_id"] == "model.scripted" for item in payload["module_registry"])
-    assert payload["note"] == "Issue baseline document header lists update date 2026-07-30."
+    assert payload["note"] is None
 
 
 def test_conversation_lifecycle_and_profile_lock(migrated_app: TestClient) -> None:

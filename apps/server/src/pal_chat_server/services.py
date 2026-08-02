@@ -890,11 +890,6 @@ def bootstrap_payload(
 ) -> dict[str, Any]:
     ensure_default_template(session)
     sync_catalog_from_manifests(session, settings)
-    note = None
-    # PROJECT_OVERVIEW.md in the issue attachment is dated 2026-07-30, which is in the future
-    # relative to the current run date 2026-07-29; expose the absolute date to avoid ambiguity.
-    if settings.env == "development":
-        note = "Issue baseline document header lists update date 2026-07-30."
     return {
         "app_name": settings.app_name,
         "app_version": settings.app_version,
@@ -911,7 +906,7 @@ def bootstrap_payload(
             "dev_command": "npm --prefix apps/web run dev",
             "build_command": "npm --prefix apps/web run build",
         },
-        "note": note,
+        "note": None,
     }
 
 
