@@ -6,11 +6,11 @@ $RuntimeDir = Join-Path $RootDir ".dev/runtime"
 foreach ($name in @("api.pid", "web.pid")) {
   $path = Join-Path $RuntimeDir $name
   if (Test-Path $path) {
-    $pid = Get-Content $path
+    $processId = Get-Content $path
     try {
-      Stop-Process -Id $pid -Force -ErrorAction Stop
+      Stop-Process -Id $processId -Force -ErrorAction Stop
     } catch {
-      Write-Warning "Failed to stop PID $pid from $name: $_"
+      Write-Warning "Failed to stop PID $processId from ${name}: $_"
     }
     Remove-Item $path -Force
   }
