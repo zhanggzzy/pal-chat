@@ -22,7 +22,7 @@ function Wait-Http {
       Start-Sleep -Seconds 1
     }
   }
-  throw "Timed out waiting for $Label: $Url"
+  throw "Timed out waiting for ${Label}: $Url"
 }
 
 New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null

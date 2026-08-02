@@ -10,7 +10,7 @@ foreach ($name in @("api.pid", "web.pid")) {
     try {
       Stop-Process -Id $pid -Force -ErrorAction Stop
     } catch {
-      Write-Warning "Failed to stop PID $pid from $name: $_"
+      Write-Warning "Failed to stop PID $pid from ${name}: $_"
     }
     Remove-Item $path -Force
   }
